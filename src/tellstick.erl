@@ -11,7 +11,7 @@
 -behaviour(gen_server).
 
 -include_lib("can/include/can.hrl").
--include_lib("../include/pds_proto.hrl").
+-include_lib("pds/include/pds_proto.hrl").
 %% API
 -export([start/0]).
 -export([reload/0]).
