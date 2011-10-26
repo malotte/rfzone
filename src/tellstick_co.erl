@@ -2,7 +2,8 @@
 %%% @author Tony Rogvall <tony@rogvall.se>
 %%% @copyright (C) 2010, Tony Rogvall
 %%% @doc
-%%%    Tellstick control application
+%%%    Tellstick control application.
+%%     For detailed description of the functionality see the overview.
 %%% @end
 %%% Created :  5 Jul 2010 by Tony Rogvall <tony@rogvall.se>
 %%%-------------------------------------------------------------------
@@ -65,21 +66,46 @@
 %%%===================================================================
 
 %%--------------------------------------------------------------------
-%% @doc
-%% Starts the server
+%% @spec start() -> {ok, Pid} | ignore | {error, Error}
 %%
-%% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
+%% @doc
+%% Starts the server.
+%%
 %% @end
 %%--------------------------------------------------------------------
 start() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
-reload() ->
-    gen_server:call(?SERVER, reload).
-
+%%--------------------------------------------------------------------
+%% @spec stop() -> ok | {error, Error}
+%%
+%% @doc
+%% Stops the server.
+%%
+%% @end
+%%--------------------------------------------------------------------
 stop() ->
     gen_server:call(?SERVER, stop).
 
+%%--------------------------------------------------------------------
+%% @spec reload() -> ok | {error, Error}
+%%
+%% @doc
+%% Reloads the configuration file.
+%%
+%% @end
+%%--------------------------------------------------------------------
+reload() ->
+    gen_server:call(?SERVER, reload).
+
+%%--------------------------------------------------------------------
+%% @spec dump() -> ok | {error, Error}
+%%
+%% @doc
+%% Dumps the loop data to standard output.
+%%
+%% @end
+%%--------------------------------------------------------------------
 dump() ->
     gen_server:call(?SERVER, dump).
 
@@ -117,10 +143,6 @@ init([]) ->
     end.
 
 %%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Handling call messages
-%%
 %% @spec handle_call(Request, From, State) ->
 %%                                   {reply, Reply, State} |
 %%                                   {reply, Reply, State, Timeout} |
@@ -128,6 +150,17 @@ init([]) ->
 %%                                   {noreply, State, Timeout} |
 %%                                   {stop, Reason, Reply, State} |
 %%                                   {stop, Reason, State}
+%% @doc
+%% Handling call messages.
+%% Request can be the following:
+%% <ul>
+%% <li> {get, Index, SubInd} - Returns the value for Index:SubInd.</li>
+%% <li> {set, Index, SubInd, Value} - Sets the value for Index:SubInd.</li>
+%% <li> reload - Reloads the configuration file.</li>
+%% <li> dump - Writes loop data to standard out (for debugging).</li>
+%% <li> stop - Stops the application.</li>
+%% </ul>
+%%
 %% @end
 %%--------------------------------------------------------------------
 handle_call({get, Index, SubInd}, _From, State) ->
@@ -172,12 +205,12 @@ handle_call(_Request, _From, State) ->
 
 %%--------------------------------------------------------------------
 %% @private
-%% @doc
-%% Handling cast messages
-%%
 %% @spec handle_cast(Msg, State) -> {noreply, State} |
 %%                                  {noreply, State, Timeout} |
 %%                                  {stop, Reason, State}
+%% @doc
+%% Handling cast messages.
+%%
 %% @end
 %%--------------------------------------------------------------------
 handle_cast(co_node_terminated, State) ->
@@ -187,12 +220,12 @@ handle_cast(_Msg, State) ->
 
 %%--------------------------------------------------------------------
 %% @private
-%% @doc
-%% Handling all non call/cast messages
-%%
 %% @spec handle_info(Info, State) -> {noreply, State} |
 %%                                   {noreply, State, Timeout} |
 %%                                   {stop, Reason, State}
+%% @doc
+%% Handling all non call/cast messages.
+%% 
 %% @end
 %%--------------------------------------------------------------------
 handle_info({notify, RemoteId, Index = ?MSG_POWER_ON, SubInd, Value}, State) ->

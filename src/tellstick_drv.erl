@@ -17,8 +17,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
--compile(export_all).
-
+%% Remote control protocols
+-export([nexa/3, nexax/3, waveman/3, sartano/2, ikea/4, risingsun/3]).
 -define(SERVER, ?MODULE). 
 
 -ifdef(debug).
@@ -51,23 +51,63 @@
 %%%===================================================================
 
 %%--------------------------------------------------------------------
+%% @spec start() -> {ok, Pid} | ignore | {error, Error}
 %% @doc
-%% Starts the server
+%% Starts the server.
 %%
-%% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
 %% @end
 %%--------------------------------------------------------------------
 start() ->
     start([debug, {device,"/dev/tty.usbserial-A700eTGD"}]).
 
+%%--------------------------------------------------------------------
+%% @spec start(Ops) -> {ok, Pid} | ignore | {error, Error}
+%% Opts = [{device, Device}]
+%% Device = string()
+%%
+%% @doc
+%% Starts the server.
+%% Device contains the path to the Device. Default is "/dev/tty.usbserial-A700eTGD"
+%%
+%% @end
+%%--------------------------------------------------------------------
 start(Opts) ->
     gen_server:start({local,?SERVER}, ?MODULE, Opts, []).
 
+%%--------------------------------------------------------------------
+%% @spec nexa(House, Channel, On) -> ok | {error, Error}
+%%   where
+%%    House = integer()
+%%    Channel = integer()
+%%    On = boolean() | bell
+%%
+%% @doc
+%% Sends a nexa protocol request to the device.
+%% House should be in the range [$A - $P]. <br/>
+%% Channel should be in the range [1 - 16]. <br/>
+%%
+%% @end
+%%--------------------------------------------------------------------
 nexa(House,Channel,On) when
       House >= $A, House =< $P,
       Channel >= 1, Channel =< 16, (is_boolean(On) orelse On=:=bell) ->
     gen_server:call(?SERVER, {nexa,House,Channel,On}).
 
+%%--------------------------------------------------------------------
+%% @spec nexax(Serial, Channel, Level) -> ok | {error, Error}
+%%   where
+%%    Serial = integer()
+%%    Channel = integer()
+%%    Level = boolean() | bell | integer()
+%%
+%% @doc
+%% Sends a nexax protocol request to the device.
+%% Serial should be in the range [0 - 16#3fffffff]. <br/>
+%% Channel should be in the range [1 - 16]. <br/>
+%% If Level is an integer it should be in the range [0 - 255]. <br/>
+%%
+%% @end
+%%--------------------------------------------------------------------
 nexax(Serial,Channel,Level) when
       Serial >= 0, Serial =< 16#3ffffff,
       Channel >= 1, Channel =< 16, 
@@ -76,15 +116,57 @@ nexax(Serial,Channel,Level) when
 	       andalso (Level =< 255))) ->
     gen_server:call(?SERVER, {nexax,Serial,Channel,Level}).
 
+%%--------------------------------------------------------------------
+%% @spec waveman(House, Channel, On) -> ok | {error, Error}
+%%   where
+%%    House = integer()
+%%    Channel = integer()
+%%    On = boolean() 
+%%
+%% @doc
+%% Sends a waveman protocol request to the device.
+%% House should be in the range [$A - $P]. <br/>
+%% Channel should be in the range [1 - 16]. <br/>
+%%
+%% @end
+%%--------------------------------------------------------------------
 waveman(House,Channel,On) when
       House >= $A, House =< $P,
       Channel >= 1, Channel =< 16, is_boolean(On) ->
     gen_server:call(?SERVER, {waveman,House,Channel,On}).    
 
+%%--------------------------------------------------------------------
+%% @spec sartano(Channel, On) -> ok | {error, Error}
+%%   where
+%%    Channel = integer()
+%%    On = boolean() 
+%%
+%% @doc
+%% Sends a sartano protocol request to the device.
+%% Channel should be in the range [1 - 16#3ff]. <br/>
+%%
+%% @end
+%%--------------------------------------------------------------------
 sartano(Channel,On) when
     Channel >= 0, Channel =< 16#3FF, is_boolean(On) ->
     gen_server:call(?SERVER, {sartano,Channel,On}).
     
+%%--------------------------------------------------------------------
+%% @spec ikea(system, Channel, Level, Style) -> ok | {error, Error}
+%%   where
+%%    Serial= integer()
+%%    Channel = integer()
+%%    Level = integer()
+%%    Style = 0 | 1
+%%
+%% @doc
+%% Sends a ikea protocol request to the device.
+%% Serial should be in the range [1 - 16]. <br/>
+%% Channel should be in the range [1 - 10]. <br/>
+%% Level should be in the range [1 - 10]. <br/>
+%%
+%% @end
+%%--------------------------------------------------------------------
 ikea(System,Channel,Level,Style) when
       System >= 1, System =< 16,
       Channel >= 1, Channel =< 10,
@@ -92,6 +174,20 @@ ikea(System,Channel,Level,Style) when
       Style >= 0, Style =< 1 ->
     gen_server:call(?SERVER, {ikea,System,Channel,Level,Style}).
     
+%%--------------------------------------------------------------------
+%% @spec risingsun(Code, Unit, On) -> ok | {error, Error}
+%%   where
+%%    Code = integer()
+%%    Unit = integer()
+%%    On = boolean() 
+%%
+%% @doc
+%% Sends a risingsun protocol request to the device.
+%% Code should be in the range [1 - 4]. <br/>
+%% Unit should be in the range [1 - 4]. <br/>
+%%
+%% @end
+%%--------------------------------------------------------------------
 risingsun(Code,Unit,On) when
       Code >= 1, Code =< 4, Unit >= 1, Unit =< 4, is_boolean(On) ->    
     gen_server:call(?SERVER, {risingsun,Code,Unit,On}).
@@ -103,13 +199,13 @@ risingsun(Code,Unit,On) when
 
 %%--------------------------------------------------------------------
 %% @private
-%% @doc
-%% Initializes the server
-%%
 %% @spec init(Args) -> {ok, State} |
 %%                     {ok, State, Timeout} |
 %%                     ignore |
 %%                     {stop, Reason}
+%% @doc
+%% Initializes the server
+%%
 %% @end
 %%--------------------------------------------------------------------
 init(Opts) ->
@@ -138,9 +234,6 @@ init(Opts) ->
 
 %%--------------------------------------------------------------------
 %% @private
-%% @doc
-%% Handling call messages
-%%
 %% @spec handle_call(Request, From, State) ->
 %%                                   {reply, Reply, State} |
 %%                                   {reply, Reply, State, Timeout} |
@@ -148,6 +241,9 @@ init(Opts) ->
 %%                                   {noreply, State, Timeout} |
 %%                                   {stop, Reason, Reply, State} |
 %%                                   {stop, Reason, State}
+%% @doc
+%% Handling call messages
+%%
 %% @end
 %%--------------------------------------------------------------------
 handle_call({nexa,House,Channel,On},_From,State) ->
@@ -210,12 +306,12 @@ handle_call(_Request, _From, State) ->
 
 %%--------------------------------------------------------------------
 %% @private
-%% @doc
-%% Handling cast messages
-%%
 %% @spec handle_cast(Msg, State) -> {noreply, State} |
 %%                                  {noreply, State, Timeout} |
 %%                                  {stop, Reason, State}
+%% @doc
+%% Handling cast messages
+%%
 %% @end
 %%--------------------------------------------------------------------
 handle_cast(_Msg, State) ->
@@ -224,12 +320,12 @@ handle_cast(_Msg, State) ->
 
 %%--------------------------------------------------------------------
 %% @private
-%% @doc
-%% Handling all non call/cast messages
-%%
 %% @spec handle_info(Info, State) -> {noreply, State} |
 %%                                   {noreply, State, Timeout} |
 %%                                   {stop, Reason, State}
+%% @doc
+%% Handling all non call/cast messages
+%%
 %% @end
 %%--------------------------------------------------------------------
 handle_info(_Info, State) ->
@@ -238,13 +334,14 @@ handle_info(_Info, State) ->
 
 %%--------------------------------------------------------------------
 %% @private
+%% @spec terminate(Reason, State) -> void()
+%%
 %% @doc
 %% This function is called by a gen_server when it is about to
 %% terminate. It should be the opposite of Module:init/1 and do any
 %% necessary cleaning up. When it returns, the gen_server terminates
 %% with Reason. The return value is ignored.
 %%
-%% @spec terminate(Reason, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
 terminate(_Reason, _State) ->

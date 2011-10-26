@@ -30,7 +30,7 @@ dialyze:
 	dialyzer --src -o dia.out $(DIA_FLAGS) -c $(MODULES:%=%.erl) 
 
 edoc:
-	erl -noshell -pa doc -run edoc_run application "pds" '".."' '[{private,false},no_packages,{sort_functions,false}]'
+	erl -noshell -pa doc -run edoc_run application "tellstick" '".."' '[{private,false},no_packages,{sort_functions,false}]'
 
 clean:
 	rm -f $(OBJS) 
