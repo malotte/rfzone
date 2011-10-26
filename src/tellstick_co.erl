@@ -15,8 +15,8 @@
 -include_lib("canopen/include/canopen.hrl").
 -include_lib("pds/include/pds_proto.hrl").
 %% API
--export([start/0, stop/0, dump/0]).
--export([reload/0]).
+-export([start/0, start/1, stop/0, dump/0]).
+-export([reload/0, reload/1]).
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
@@ -70,11 +70,25 @@
 %%
 %% @doc
 %% Starts the server.
+%% Loads configuration from default location.
 %%
 %% @end
 %%--------------------------------------------------------------------
 start() ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+    File = filename:join(code:priv_dir(tellstick), "tellstick_co.conf"),
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [{config, File}], []).
+
+%%--------------------------------------------------------------------
+%% @spec start(File) -> {ok, Pid} | ignore | {error, Error}
+%%
+%% @doc
+%% Starts the server.
+%% Loads configuration from File.
+%%
+%% @end
+%%--------------------------------------------------------------------
+start(File) ->
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [{config,File}], []).
 
 %%--------------------------------------------------------------------
 %% @spec stop() -> ok | {error, Error}
@@ -91,12 +105,24 @@ stop() ->
 %% @spec reload() -> ok | {error, Error}
 %%
 %% @doc
-%% Reloads the configuration file.
+%% Reloads the configuration file from default location.
 %%
 %% @end
 %%--------------------------------------------------------------------
 reload() ->
-    gen_server:call(?SERVER, reload).
+    File = filename:join(code:priv_dir(tellstick), "tellstick_co.conf"),
+    gen_server:call(?SERVER, {reload, File}).
+
+%%--------------------------------------------------------------------
+%% @spec reload(File) -> ok | {error, Error}
+%%
+%% @doc
+%% Reloads the configuration file.
+%%
+%% @end
+%%--------------------------------------------------------------------
+reload(File) ->
+    gen_server:call(?SERVER, {reload, File}).
 
 %%--------------------------------------------------------------------
 %% @spec dump() -> ok | {error, Error}
@@ -125,8 +151,8 @@ dump() ->
 %%                     {stop, Reason}
 %% @end
 %%--------------------------------------------------------------------
-init([]) ->
-    case load_config() of
+init([{config,File}]) ->
+    case load_config(File) of
 	{ok, Conf} ->
 	    Nid = (Conf#conf.serial bsr 8) bor ?CAN_EFF_FLAG,
 	    if Conf#conf.device =:= undefined ->
@@ -136,7 +162,7 @@ init([]) ->
 	    end,
 	    co_node:attach(Conf#conf.serial),
 	    subscribe(Conf#conf.serial),
-	    power_on(Nid, Conf),
+	    power_on(Nid, Conf#conf.items),
 	    {ok, #state { co_node = Conf#conf.serial, node_id = Nid, items=Conf#conf.items }};
 	Error ->
 	    {stop, Error}
@@ -171,8 +197,8 @@ handle_call({set, Index, SubInd, NewValue}, _From, State) ->
     io:format("~p: set ~.16B:~.8B to ~p\n",[?MODULE, Index, SubInd, NewValue]),
     {reply,{error, ?ABORT_NO_SUCH_OBJECT}, State};
 
-handle_call(reload, _From, State) ->
-    case load_config() of
+handle_call({reload, File}, _From, State) ->
+    case load_config(File) of
 	{ok,Conf} ->
 	    NewCoNode = Conf#conf.serial,
 	    Nid = (Conf#conf.serial bsr 8) bor ?CAN_EFF_FLAG,
@@ -185,7 +211,12 @@ handle_call(reload, _From, State) ->
 		    co_node:attach(NewCoNode),
 		    subscribe(NewCoNode)
 	    end,
-	    power_on(Nid, Conf),
+	    ItemsToAdd = lists:usort(Conf#conf.items) -- 
+		lists:usort(State#state.items),
+	    ItemsToRemove = lists:usort(State#state.items) -- 
+		lists:usort(Conf#conf.items),
+	    power_on(Nid, ItemsToAdd),
+	    power_off(Nid, ItemsToRemove),
 	    %% FIXME: handle changes 
 	    {reply, ok, State#state { co_node = NewCoNode,
 				      node_id = Nid,
@@ -328,8 +359,7 @@ take_item(_Rid, _Rchan, [],_acc) ->
 
 
 %% Load configuration file
-load_config() ->
-    File = filename:join(code:priv_dir(tellstick), "tellstick_co.conf"),
+load_config(File) ->
     case file:consult(File) of
 	{ok, Cs} ->
 	    load_conf(Cs,#conf{},[]);
@@ -364,14 +394,20 @@ load_conf([], Conf, Items) ->
     end.
 
 
-power_on(Nid, Conf) ->
+power_on(Nid, ItemsToAdd) ->
+    power_command(Nid, ?MSG_OUTPUT_ADD, ItemsToAdd).
+
+power_off(Nid, ItemsToRemove) ->
+    power_command(Nid, ?MSG_OUTPUT_DEL, ItemsToRemove).
+
+power_command(Nid, Cmd, Items) ->
     lists:foreach(
       fun(I) ->
-	      co_node:notify(Nid, ?MSG_OUTPUT_ADD, I#item.lchan, 
+	      co_node:notify(Nid, Cmd, I#item.lchan, 
 			       ((I#item.rid bsl 8) bor I#item.rchan) 
 				   band 16#ffffffff)
       end,
-      Conf#conf.items).
+      Items).
 
 remote_power_off(_Rid, _Nid, _Is) ->
     ok.
