@@ -19,6 +19,9 @@
 
 %% Remote control protocols
 -export([nexa/3, nexax/3, waveman/3, sartano/2, ikea/4, risingsun/3]).
+
+%% Testing
+-export([test/0, run_test/1]).
 -define(SERVER, ?MODULE). 
 
 -ifdef(debug).
@@ -63,7 +66,7 @@ start() ->
 %%--------------------------------------------------------------------
 %% @spec start(Ops) -> {ok, Pid} | ignore | {error, Error}
 %% Opts = [{device, Device}]
-%% Device = string()
+%% Device = string() | simulated
 %%
 %% @doc
 %% Starts the server.
@@ -220,15 +223,24 @@ init(Opts) ->
 		 end,
     Speed = 4800,
     %% DOpts = [binary,{baud,Speed},{buftm,1},{bufsz,128},{csize,8},{stopb,1},{parity,0},{mode,raw}],
-    case sl:open(DeviceName,[{baud,Speed}]) of
-	{ok,SL} ->
-	    ?dbg("TELLSTICK open: ~s@~w\n", [DeviceName,Speed]),
-	    S = #state { sl=SL, 
+    case DeviceName of
+	simulated -> 
+	    ?dbg("TELLSTICK open: ~s\n", [DeviceName]),
+	    S = #state { sl=DeviceName, 
 			 device_name=DeviceName
 		       },
 	    {ok, S};
-	Error ->
-	    {stop, Error}
+	_NotSimulated ->
+	    case sl:open(DeviceName,[{baud,Speed}]) of
+		{ok,SL} ->
+		    ?dbg("TELLSTICK open: ~s@~w\n", [DeviceName,Speed]),
+		    S = #state { sl=SL, 
+				 device_name=DeviceName
+			       },
+		    {ok, S};
+		Error ->
+		    {stop, Error}
+	    end
     end.
 
 
@@ -577,6 +589,9 @@ reverse_bits_(Bits, I, RBits) ->
     reverse_bits_(Bits bsr 1, I-1, (RBits bsl 1) bor (Bits band 1)).
 
 
+send_command(simulated, Data) ->
+    io:format("~p: Sending data =~p\n", [?MODULE, Data]),
+    ok;
 send_command(SL, Data) ->
     Data1 = ascii_data(Data),
     N = length(Data1),

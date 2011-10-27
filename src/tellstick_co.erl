@@ -158,7 +158,14 @@ init([{config,File}]) ->
 	    if Conf#conf.device =:= undefined ->
 		    tellstick_drv:start();
 	       true ->
-		    tellstick_drv:start([{device,Conf#conf.device}])
+		    Device = Conf#conf.device,
+		    case file:read_file_info(Device) of
+			{error, _Reason} ->
+			    io:format("Device ~p non existing, executing in simulated mode.\n",[Device]),
+			    tellstick_drv:start([{device,simulated}]);
+			_FI ->
+			    tellstick_drv:start([{device,Device}])
+		    end
 	    end,
 	    co_node:attach(Conf#conf.serial),
 	    subscribe(Conf#conf.serial),
@@ -504,12 +511,10 @@ call(Type, Args) ->
     catch
 	exit:Reason ->
 	    io:format("~p: tellstick_drv: crash=~p\n", [?MODULE, Reason]),
-%%	    {error,Reason};
-	    ok;
+	    {error,Reason};
 	error:Reason ->
 	    io:format("~p: tellstick_drv: crash=~p\n", [?MODULE, Reason]),
-%%	    {error,Reason}
-	    ok
+	    {error,Reason}
     end.
     
     

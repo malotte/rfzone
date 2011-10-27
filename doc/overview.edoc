@@ -1,19 +1,34 @@
 @author  Tony Rogvall <tony@rogvall.se>
 @version 1.0
 @title Tellstick control application
-@doc A CANopen application that connects to a CANopen node and receives commands that can be transfered to a tellstick device.
+@doc A CANopen application that connects to a CANopen node and receives commands that can be interpreted and transfered to a tellstick device.
+
+== General ==
+The tellstick application enables the possibility to send remote control commands from a CANopen node, such as the SeaZone RC application for iPhone/iPod/iPad, via a tellstick device to your electrical equipment. I.e. you can use your phone to turn on the light etc.
+
 
 The tellstick application consists of two parts:
 <ul>
-<li>tellstick(_co) - Server receiving CANopen messages.</li>
-<li>tellstick_drv  - Server sending requests to the tellstick device. </li>
+<li>tellstick(_co) - Server receiving CANopen messages interpreted by the pds/canopen application.</li>
+<li>tellstick_drv  - Server sending remote control commnds to the tellstick device. </li>
 </ul>
 
-The application reads its configuration from a file, "tellstick(_co).conf", located in the applications priv-directory.
+The application reads its configuration from a file, if none specified "tellstick(_co).conf", located in the applications priv-directory, is used as default.
 
+tellstick has support for the following remote control protocols:
+<ul>
+<li>nexa</li>
+<li>nexax</li>
+<li>waveman</li>
+<li>sartano</li>
+<li>ikea</li>
+<li>risingsun</li>
+</ul>
+
+== Implementation ==
 Currently there exists two versions of the application. One that uses the pds application and one that uses the canopen application (co) for getting access to the CANopen network.
 
-The following applies to the tellstick_co-vesrion.
+The following applies to the tellstick_co-version.
 The application attaches to a CANopen node and adds subscriptions for the
 MPDO messages it wants to receive.
 
@@ -21,18 +36,27 @@ These are:
 <ul>
 <li> ?MSG_POWER - Signals power on of another CANopen node. </li>
 <li> ?MSG_POWER_OFF - Signals power off of another CANopen node.</li>
-<li> ?MSG_DIGITAL </li>
-<li> ?MSG_ANALOG </li>
-<li> ?MSG_ENCODER </li>
+<li> ?MSG_DIGITAL - Control signal for a digital device.</li>
+<li> ?MSG_ANALOG - Control signal for an analog device.</li>
+<li> ?MSG_ENCODER - Control signal for an encoded device (not supported yet).</li>
 </ul>
 
-(For translation of the erlang macros to CANopen codes @see pds_proto.hrl).
+For translation of the erlang macros to CANopen numeric values see pds_proto.hrl.
 
 When receiving ?MSG_POWER_ON and ?MSG_POWER_OFF the application checks 
 whether its configuration contains any items belonging to that node.
-If that is the case the appropriate ?MSG_OUTPUT_ADD and ?MSG_OUTPUT_ACTIVE
-or sent.
+If that is the case the appropriate ?MSG_OUTPUT_ADD/DEL and ?MSG_OUTPUT_ACTIVE
+messages are sent to the originting CANopen node.
+
+When receiving ?MSG_ANALOG/?MSG_DIGITAL the indicated items are activated/deactivated/adjusted as requested. This is done by sending a command using the correct protocol to the tellstick device. A ?MSG_OUTPUT_ACTIVE is sent as a reply to the originating CANopen node. 
+
+For testing purposes it is possible to run tellstick in simulated mode, setting the device option to simulated. In this mode output is written on standard out instead of sent to the device.
+
+See also the documentation for canopen.
+@see canopen
+@end
 
 @end
+
 
 
