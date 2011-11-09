@@ -11,7 +11,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start/0, start/1]).
+-export([start/0, start/1, stop/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -76,6 +76,17 @@ start() ->
 %%--------------------------------------------------------------------
 start(Opts) ->
     gen_server:start({local,?SERVER}, ?MODULE, Opts, []).
+
+%%--------------------------------------------------------------------
+%% @spec stop() -> ok | {error, Error}
+%%
+%% @doc
+%% Stops the server.
+%%
+%% @end
+%%--------------------------------------------------------------------
+stop() ->
+    gen_server:call(?SERVER, stop).
 
 %%--------------------------------------------------------------------
 %% @spec nexa(House, Channel, On) -> ok | {error, Error}
@@ -312,6 +323,9 @@ handle_call({risingsun,Code,Unit,On},_From,State) ->
 	error:Reason ->
 	    {reply, {error,Reason}, State}
     end;
+
+handle_call(stop, _From, State) ->
+    {stop, normal, ok, State};
 
 handle_call(_Request, _From, State) ->
     {reply, {error,bad_call}, State}.

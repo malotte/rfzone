@@ -8,8 +8,7 @@ DIA_FLAGS =
 
 MODULES = \
 	tellstick_drv \
-	tellstick_co \
-	tellstick
+	tellstick 
 
 EBIN = ../ebin
 

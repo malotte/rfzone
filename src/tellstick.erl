@@ -2,30 +2,39 @@
 %%% @author Tony Rogvall <tony@rogvall.se>
 %%% @copyright (C) 2010, Tony Rogvall
 %%% @doc
-%%%    Tellstick control application
+%%%    Tellstick control application.
+%%%    For detailed description of the functionality see the overview.
 %%% @end
-%%% Created :  5 Jul 2010 
+%%% Created :  5 Jul 2010 by Tony Rogvall <tony@rogvall.se>
 %%%-------------------------------------------------------------------
 -module(tellstick).
 
 -behaviour(gen_server).
 
 -include_lib("can/include/can.hrl").
--include_lib("pds/include/pds_proto.hrl").
+-include_lib("canopen/include/canopen.hrl").
+-include_lib("canopen/include/co_app.hrl").
 %% API
--export([start/0, stop/0]).
--export([reload/0]).
+-export([start/0, start/2, start_link/1, stop/0]).
+-export([reload/0, reload/1, dump/0]).
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
-%% pds_node callbacks
--export([pds_get/4,
-	 pds_set/4,
-	 pds_notify/5,
-	 pds_state/5]).
-	 
+%% Testing
+-ifdef(debug).
+-define(dbg(Fmt,As), io:format((Fmt), (As))).
+-else.
+-define(dbg(Fmt,As), ok).
+-endif.
+
 -define(SERVER, ?MODULE). 
+-define(COMMANDS,[{{?MSG_POWER_ON, 0}, ?INTEGER, 0},
+		  {{?MSG_POWER_OFF, 0}, ?INTEGER, 0},
+		  {{?MSG_DIGITAL, 0}, ?INTEGER, 0},
+		  {{?MSG_ANALOG, 0}, ?INTEGER, 0},
+		  {{?MSG_ENCODER, 0}, ?INTEGER, 0}]).
+
 
 -record(conf,
 	{
@@ -54,28 +63,64 @@
 
 -record(state,
 	{
-	  pds,   %% pds state (MUST BE AT THIS LOCATION)
-	  items  %% conf {ID,CHAN,TYPE,Command}
+	  co_node, %% 
+	  node_id, 
+	  items    %% conf {ID,CHAN,TYPE,Command}
 	}).
 
 %%%===================================================================
 %%% API
 %%%===================================================================
-
 %%--------------------------------------------------------------------
-%% @spec start() -> {ok, Pid} | ignore | {error, Error}
-%%
+%% @private
+%% @spec start(StartType, StartArgs) -> {ok, Pid} |
+%%                                      {ok, Pid, State} |
+%%                                      {error, Reason}
+%%      StartType = normal | {takeover, Node} | {failover, Node}
+%%      StartArgs = term()
 %% @doc
-%% Starts the server
+%% This function is called whenever an application is started using
+%% application:start/[1,2], and should start the processes of the
+%% application. If the application is structured according to the OTP
+%% design principles as a supervision tree, this means starting the
+%% top supervisor of the tree.
 %%
 %% @end
 %%--------------------------------------------------------------------
+start(_StartType, _StartArgs) ->
+    io:format("~p: start: Starting up\n", [?MODULE]),
+    Args = 
+	case application:get_env(tellstick) of
+	    undefined -> []; %% Test
+	    {ok,As} -> As
+	end,
+    io:format("~p: start: Args=~p\n", [?MODULE,Args]),
+    tellstick_sup:start_link(Args).
+
 start() ->
-    can_udp:start(),  %% listen to multicast interface
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+    start(normal, []).
+
+
+%%--------------------------------------------------------------------
+%% @spec start_link(Args) -> {ok, Pid} | ignore | {error, Error}
+%%
+%% @doc
+%% Starts the server.
+%% Loads configuration from File.
+%%
+%% @end
+%%--------------------------------------------------------------------
+start_link(Args) ->
+    io:format("~p: start_link: Args=~p\n", [?MODULE,Args]),
+    File = proplists:get_value(conf, Args, "tellstick_co.conf"),
+    ConfFile = filename:join(code:priv_dir(tellstick), File),
+    io:format("~p: start_link: File=~p\n", [?MODULE,ConfFile]),
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [{config,ConfFile}], []).
+
 
 %%--------------------------------------------------------------------
 %% @spec stop() -> ok | {error, Error}
+%%
 %% @doc
 %% Stops the server.
 %%
@@ -86,13 +131,38 @@ stop() ->
 
 %%--------------------------------------------------------------------
 %% @spec reload() -> ok | {error, Error}
+%%
+%% @doc
+%% Reloads the configuration file from default location.
+%%
+%% @end
+%%--------------------------------------------------------------------
+reload() ->
+    File = filename:join(code:priv_dir(tellstick), "tellstick_co.conf"),
+    gen_server:call(?SERVER, {reload, File}).
+
+%%--------------------------------------------------------------------
+%% @spec reload(File) -> ok | {error, Error}
+%%
 %% @doc
 %% Reloads the configuration file.
 %%
 %% @end
 %%--------------------------------------------------------------------
-reload() ->
-    gen_server:call(?SERVER, reload).
+reload(File) ->
+    gen_server:call(?SERVER, {reload, File}).
+
+%%--------------------------------------------------------------------
+%% @spec dump() -> ok | {error, Error}
+%%
+%% @doc
+%% Dumps the loop data to standard output.
+%%
+%% @end
+%%--------------------------------------------------------------------
+dump() ->
+    gen_server:call(?SERVER, dump).
+
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -100,34 +170,44 @@ reload() ->
 
 %%--------------------------------------------------------------------
 %% @private
+%% @doc
+%% Initializes the server
+%%
 %% @spec init(Args) -> {ok, State} |
 %%                     {ok, State, Timeout} |
 %%                     ignore |
 %%                     {stop, Reason}
-%% @doc
-%% Initializes the server
-%%
 %% @end
 %%--------------------------------------------------------------------
-init([]) ->
-    case load_config() of
+init([{config,File}]) ->
+    case load_config(File) of
 	{ok, Conf} ->
-	    Nid = ?CAN_EFF_FLAG bor (Conf#conf.serial bsr 8),
-	    Pds = pds_node:new(Nid, Conf#conf.serial, Conf#conf.product),
+
 	    if Conf#conf.device =:= undefined ->
 		    tellstick_drv:start();
 	       true ->
-		    tellstick_drv:start([{device,Conf#conf.device}])
+		    Device = Conf#conf.device,
+		    case file:read_file_info(Device) of
+			{error, _Reason} ->
+			    ?dbg("~p: init: Device ~p non existing, executing in simulated mode.\n",
+				 [?MODULE, Device]),
+			    tellstick_drv:start([{device,simulated}]);
+			_FI ->
+			    tellstick_drv:start([{device,Device}])
+		    end
 	    end,
-	    can_router:attach(),
-	    power_on(Nid, Conf),
-	    {ok, #state { pds=Pds, items=Conf#conf.items }};
+	    {ok, Nid} = co_node:attach(Conf#conf.serial),
+	    subscribe(Conf#conf.serial),
+	    power_on(Nid, Conf#conf.items),
+	    process_flag(trap_exit, true),
+	    {ok, #state { co_node = Conf#conf.serial, node_id = Nid, items=Conf#conf.items }};
 	Error ->
+	    ?dbg("~p: init: Not possible to lad configuration file ~p.\n",
+				 [?MODULE, File]),
 	    {stop, Error}
     end.
 
 %%--------------------------------------------------------------------
-%% @private
 %% @spec handle_call(Request, From, State) ->
 %%                                   {reply, Reply, State} |
 %%                                   {reply, Reply, State, Timeout} |
@@ -136,25 +216,58 @@ init([]) ->
 %%                                   {stop, Reason, Reply, State} |
 %%                                   {stop, Reason, State}
 %% @doc
-%% Handling call messages
+%% Handling call messages.
+%% Request can be the following:
+%% <ul>
+%% <li> {get, Index, SubInd} - Returns the value for Index:SubInd.</li>
+%% <li> {set, Index, SubInd, Value} - Sets the value for Index:SubInd.</li>
+%% <li> reload - Reloads the configuration file.</li>
+%% <li> dump - Writes loop data to standard out (for debugging).</li>
+%% <li> stop - Stops the application.</li>
+%% </ul>
 %%
 %% @end
 %%--------------------------------------------------------------------
-handle_call(reload, _From, State) ->
-    case load_config() of
+handle_call({get, Index, SubInd}, _From, State) ->
+    ?dbg("~p: get ~.16B:~.8B \n",[?MODULE, Index, SubInd]),
+    {reply,{error, ?ABORT_NO_SUCH_OBJECT}, State};
+
+handle_call({set, Index, SubInd, NewValue}, _From, State) ->
+    ?dbg("~p: set ~.16B:~.8B to ~p\n",[?MODULE, Index, SubInd, NewValue]),
+    {reply,{error, ?ABORT_NO_SUCH_OBJECT}, State};
+
+handle_call({reload, File}, _From, State) ->
+    case load_config(File) of
 	{ok,Conf} ->
-	    Nid = ?CAN_EFF_FLAG bor (Conf#conf.serial bsr 8),
-	    Pds = State#state.pds,
-	    Pds1 = Pds#pds_state { nid = Nid, 
-				   serial=Conf#conf.serial, 
-				   product=Conf#conf.product },
-	    power_on(Nid, Conf),
+	    NewCoNode = Conf#conf.serial,
+	    Nid = (Conf#conf.serial bsr 8) bor ?CAN_EFF_FLAG,
+	    case State#state.co_node  of
+		NewCoNode  ->
+		    no_change;
+		OldCoNode ->
+		    unsubscribe(OldCoNode),
+		    co_node:detach(OldCoNode),
+		    co_node:attach(NewCoNode),
+		    subscribe(NewCoNode)
+	    end,
+	    ItemsToAdd = lists:usort(Conf#conf.items) -- 
+		lists:usort(State#state.items),
+	    ItemsToRemove = lists:usort(State#state.items) -- 
+		lists:usort(Conf#conf.items),
+	    power_on(Nid, ItemsToAdd),
+	    power_off(Nid, ItemsToRemove),
 	    %% FIXME: handle changes 
-	    {reply, ok, State#state { pds=Pds1, 
+	    {reply, ok, State#state { co_node = NewCoNode,
+				      node_id = Nid,
 				      items=Conf#conf.items}};
 	Error ->
 	    {reply, Error, State}
     end;
+handle_call(dump, _From, State) ->
+    io:format("State: CoNode = ~11.16.0#, ", [State#state.co_node]),
+    io:format("NodeId = ~11.16.0#, Items=\n", [State#state.node_id]),
+    lists:foreach(fun(Item) -> print_item(Item) end, State#state.items),
+    {reply, ok, State};
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
 handle_call(_Request, _From, State) ->
@@ -166,7 +279,7 @@ handle_call(_Request, _From, State) ->
 %%                                  {noreply, State, Timeout} |
 %%                                  {stop, Reason, State}
 %% @doc
-%% Handling cast messages
+%% Handling cast messages.
 %%
 %% @end
 %%--------------------------------------------------------------------
@@ -179,98 +292,99 @@ handle_cast(_Msg, State) ->
 %%                                   {noreply, State, Timeout} |
 %%                                   {stop, Reason, State}
 %% @doc
-%% Handling all non call/cast messages
-%%
+%% Handling all non call/cast messages.
+%% 
 %% @end
 %%--------------------------------------------------------------------
-handle_info(Frame, State) when is_record(Frame, can_frame) ->
-    io:format("tellstick: handle_info: FRAME = ~p\n", [Frame]),
-    pds_node:dispatch(Frame, ?MODULE, State);
+handle_info({notify, RemoteId, Index = ?MSG_POWER_ON, SubInd, Value}, State) ->
+    ?dbg("~p: handle_info: notify ~.16#: ID=~7.16.0#:~w, Value=~w \n", 
+	      [?MODULE, RemoteId, Index, SubInd, Value]),
+    remote_power_on(RemoteId, State#state.node_id, State#state.items),
+    {noreply, State};    
+handle_info({notify, RemoteId, Index = ?MSG_POWER_OFF, SubInd, Value}, State) ->
+    ?dbg("~p: handle_info: notify ~.16#: ID=~7.16.0#:~w, Value=~w \n", 
+	      [?MODULE, RemoteId, Index, SubInd, Value]),
+    remote_power_off(RemoteId, State#state.node_id, State#state.items),
+    {noreply, State};    
+handle_info({notify, RemoteId, Index, SubInd, Value}, State) ->
+    ?dbg("~p: handle_info: notify ~.16#: ID=~7.16.0#:~w, Value=~w \n", 
+	      [?MODULE, RemoteId, Index, SubInd, Value]),
+    case take_item(RemoteId, SubInd, State#state.items) of
+	false ->
+	    ?dbg("~p: take_item = false\n", [?MODULE]),
+	    lists:foreach(fun(Item) -> print_item(Item) end, State#state.items),
+	    {noreply,State};
+	{value,I,Is} ->
+	    case Index of
+		?MSG_DIGITAL ->
+		    Items = digital_input(State#state.node_id,I,Is,Value),
+		    {noreply, State#state { items=Items }};
+		?MSG_ANALOG ->
+		    Items = analog_input(State#state.node_id,I,Is,Value),
+		    {noreply, State#state { items=Items }};
+		?MSG_ENCODER ->
+		    Items = encoder_input(State#state.node_id,I,Is,Value),
+		    {noreply, State#state { items=Items }};
+		_ ->
+		    {noreply,State}
+	    end
+    end;
+handle_info({'EXIT', _Pid, co_node_terminated}, State) ->
+    {stop, co_node_terminated, ok, State};    
 handle_info(Info, State) ->
-    io:format("tellstick: handle_info: Unknown Info ~p\n", [Info]),
+    ?dbg("~p: handle_info: Unknown Info ~p\n", [?MODULE, Info]),
     {noreply, State}.
 
 %%--------------------------------------------------------------------
 %% @private
-%% @spec terminate(Reason, State) -> void()
-%%
 %% @doc
 %% This function is called by a gen_server when it is about to
 %% terminate. It should be the opposite of Module:init/1 and do any
 %% necessary cleaning up. When it returns, the gen_server terminates
 %% with Reason. The return value is ignored.
 %%
+%% @spec terminate(Reason, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
-terminate(_Reason, _State) ->
+terminate(Reason, State) ->
+    ?dbg("~p: terminate: Reason = ~p\n",[?MODULE, Reason]),
+    case whereis(list_to_atom(canopen:serial_to_string(State#state.co_node))) of
+	undefined -> 
+	    do_nothing; %% Not possible to detach and unsubscribe
+	_Pid ->
+	    co_node:detach(State#state.co_node),
+	    ?dbg("~p: terminate: detached.\n",[?MODULE]),
+	    unsubscribe(State#state.co_node)
+    end,
+    ?dbg("~p: terminate: unsubscribed.\n",[?MODULE]),
+    tellstick_drv:stop(),
+    ?dbg("~p: terminate: driver stopped.\n",[?MODULE]),
     ok.
 
 %%--------------------------------------------------------------------
 %% @private
-%% @spec code_change(OldVsn, State, Extra) -> {ok, NewState}
 %% @doc
 %% Convert process state when code is changed
 %%
+%% @spec code_change(OldVsn, State, Extra) -> {ok, NewState}
 %% @end
 %%--------------------------------------------------------------------
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-%%%===================================================================
-%%% PDS callbacks
-%%%===================================================================
-pds_get(_Ix,_Si,_Data,St) ->
-    {reply,{error, index}, St}.
-
-pds_set(_Ix,_Si,_Data,St) ->
-    {reply,{error, index}, St}.
-
-pds_notify(Rid,?MSG_POWER_ON,_Si,_Value,St) ->
-    io:format("tellstick: power_on: ID=~8.16.0B\n", [Rid]),
-    Nid = (St#state.pds)#pds_state.nid,
-    remote_power_on(Rid, Nid, St#state.items),
-    {noreply, St};    
-pds_notify(Rid,?MSG_POWER_OFF,_Si,_Value,St) ->
-    io:format("tellstick: power_off: ID=~8.16.0B\n", [Rid]),
-    Nid = (St#state.pds)#pds_state.nid,
-    remote_power_off(Rid, Nid, St#state.items),
-    {noreply, St};
-pds_notify(Rid,Ix,Si,Value,St) ->
-    io:format("tellstick: pds_notify: Rid = ~.16B: Index=~8.16.0B:~w, Value=~w \n", 
-	      [Rid, Ix,  Si, Value]),
-    case take_item(Rid,Si,St#state.items) of
-	false ->
-	    io:format("tellstick: take_item = false, Items = ~p\n", [St#state.items]),
-	    {noreply,St};
-	{value,I,Is} ->
-	    case Ix of
-		?MSG_DIGITAL ->
-		    Nid = (St#state.pds)#pds_state.nid,
-		    Items = digital_input(Nid,I,Is,Value),
-		    io:format("tellstick: digital: Items= ~p\n", [Items]),
-		    {noreply, St#state { items=Items}};
-		?MSG_ANALOG ->
-		    Nid = (St#state.pds)#pds_state.nid,
-		    Items = analog_input(Nid,I,Is,Value),
-		    io:format("tellstick: analog: Items= ~p\n", [Items]),
-		    {noreply, St#state { items=Items}};
-		?MSG_ENCODER ->
-		    Nid = (St#state.pds)#pds_state.nid,
-		    Items = encoder_input(Nid,I,Is,Value),
-		    io:format("tellstick: encoder: Items= ~p\n", [Items]),
-		    {noreply, St#state { items=Items}};
-		_ ->
-		    {noreply,St}
-	    end
-    end.
-
-
-pds_state(_Channel,_Active,_Alarm,_Ack,St) ->
-    {noreply,St}.
 
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+subscribe(CoNode) ->
+    lists:foreach(fun({{Index, _SubInd}, _Type, _Value}) ->
+			  co_node:subscribe(CoNode, Index)
+		  end, ?COMMANDS).
+unsubscribe(CoNode) ->
+    lists:foreach(fun({{Index, _SubInd}, _Type, _Value}) ->
+			  co_node:unsubscribe(CoNode, Index)
+		  end, ?COMMANDS).
+    
 take_item(Rid, Rchan, Items) ->
     take_item(Rid, Rchan, Items, []).
 
@@ -283,8 +397,7 @@ take_item(_Rid, _Rchan, [],_acc) ->
 
 
 %% Load configuration file
-load_config() ->
-    File = filename:join(code:priv_dir(tellstick), "tellstick.conf"),
+load_config(File) ->
     case file:consult(File) of
 	{ok, Cs} ->
 	    load_conf(Cs,#conf{},[]);
@@ -318,28 +431,36 @@ load_conf([], Conf, Items) ->
 	    {ok, Conf#conf {items=Items}}
     end.
 
-power_on(Nid, Conf) ->
-    lists:foreach(fun(I) ->
-			  pds_proto:notify(Nid, ?MSG_OUTPUT_ADD, I#item.lchan, 
-					   ((I#item.rid bsl 8) bor I#item.rchan) 
-					       band 16#ffffffff)
-		  end,
-    Conf#conf.items).
+
+power_on(Nid, ItemsToAdd) ->
+    power_command(Nid, ?MSG_OUTPUT_ADD, ItemsToAdd).
+
+power_off(Nid, ItemsToRemove) ->
+    power_command(Nid, ?MSG_OUTPUT_DEL, ItemsToRemove).
+
+power_command(Nid, Cmd, Items) ->
+    lists:foreach(
+      fun(I) ->
+	      co_node:notify(Nid, Cmd, I#item.lchan, 
+			       ((I#item.rid bsl 8) bor I#item.rchan) 
+				   band 16#ffffffff)
+      end,
+      Items).
 
 remote_power_off(_Rid, _Nid, _Is) ->
     ok.
 
 remote_power_on(Rid, Nid, [I | Is]) when I#item.rid =:= Rid ->
     %% add channel (local chan = remote chan)
-    pds_proto:notify(Nid, ?MSG_OUTPUT_ADD, I#item.lchan,
+    co_node:notify(Nid, ?MSG_OUTPUT_ADD, I#item.lchan,
 		   ((Rid bsl 8) bor I#item.rchan) band 16#ffffffff),
     %% update status
     AValue = if I#item.active -> 1; true -> 0 end,
-    pds_proto:notify(Nid, ?MSG_OUTPUT_ACTIVE, I#item.lchan, AValue),
+    co_node:notify(Nid, ?MSG_OUTPUT_ACTIVE, I#item.lchan, AValue),
     %% if dimmer then send level
     Analog = proplists:get_bool(analog, I#item.flags),
     if Analog ->
-	    pds_proto:notify(Nid, ?MSG_ANALOG, I#item.lchan, I#item.level);
+	    co_node:notify(Nid, ?MSG_ANALOG, I#item.lchan, I#item.level);
        true ->
 	    ok
     end,
@@ -359,30 +480,29 @@ digital_input(Nid, I, Is, Value) ->
     SpringBack = proplists:get_bool(springback, I#item.flags),
     if Digital, SpringBack, Value =:= 1 ->
 	    Active = not I#item.active,
-	    case call(I#item.type,[I#item.unit,I#item.chan,Active]) of
-		ok ->
-		    AValue = if Active -> 1; true -> 0 end,
-		    pds_proto:notify(Nid, ?MSG_OUTPUT_ACTIVE, I#item.lchan, 
-				     AValue),
-		    [I#item { active=Active} | Is];
-		_Error ->
-		    [I | Is]
-	    end;
+	    digital_input_call(Nid, I, Is, Active);
        Digital, not SpringBack ->
 	    Active = Value =:= 1,
-	    case call(I#item.type, [I#item.unit,I#item.chan,Active]) of
-		ok ->
-		    AValue = if Active -> 1; true -> 0 end,
-		    pds_proto:notify(Nid, ?MSG_OUTPUT_ACTIVE, I#item.lchan, 
-				     AValue),
-		    [I#item { active=Active} | Is];
-		_Error ->
-		    [I | Is]
-	    end;
+	    digital_input_call(Nid, I, Is, Active);
        Digital ->
+	    ?dbg("~p: digital_input: No action\n", [?MODULE]),
+	    print_item(I),
 	    [I | Is];
        true ->
-	    io:format("tellstick: Not digital device\n"),
+	    ?dbg("~p: Not digital device\n", [?MODULE]),
+	    [I | Is]
+    end.
+
+digital_input_call(Nid, I, Is, Active) -> 
+    ?dbg("~p: digital_input: calling driver\n",[?MODULE]),
+    print_item(I),
+    case call(I#item.type,[I#item.unit,I#item.chan,Active]) of
+	ok ->
+	    AValue = if Active -> 1; true -> 0 end,
+	    co_node:notify(Nid, ?MSG_OUTPUT_ACTIVE, I#item.lchan, 
+			   AValue),
+	    [I#item { active=Active} | Is];
+	_Error ->
 	    [I | Is]
     end.
 
@@ -395,9 +515,11 @@ analog_input(Nid, I, Is, Value) ->
 	    IValue = trunc(Min + (Max-Min)*(Value/65535)),
 	    %% scale Min-Max => 0-65535 (adjusting the slider)
 	    RValue = trunc(65535*((IValue-Min)/(Max-Min))),
+	    ?dbg("~p: analog_input: calling driver\n",[?MODULE]),
+	    print_item(I),
 	    case call(I#item.type,[I#item.unit,I#item.chan,IValue]) of
 		ok ->
-		    pds_proto:notify(Nid, ?MSG_ANALOG, I#item.lchan, RValue),
+		    co_node:notify(Nid, ?MSG_ANALOG, I#item.lchan, RValue),
 		    [I#item { level=RValue} | Is];
 		_Error ->
 		    [I | Is]
@@ -408,26 +530,37 @@ analog_input(Nid, I, Is, Value) ->
 
 
 encoder_input(_Nid, I, Is, _Value) ->
-    io:format("tellstick: Not implemented yet\n"),
+    ?dbg("~p: encoder_input: Not implemented yet\n",[?MODULE]),
     [I|Is].
 
 call(Type, Args) ->	       
-    io:format("tellstick: call: Type = ~p, Args = ~p\n", [Type, Args]),
+    ?dbg("~p: call: Type = ~p, Args = ~p\n", [?MODULE, Type, Args]),
     try apply(tellstick_drv, Type, Args) of
 	ok ->
 	    ok;
 	Error ->
-	    io:format("tellstick_drv: error=~p\n", [Error]),
+	    ?dbg("~p: tellstick_drv: error=~p\n", [?MODULE, Error]),
 	    Error
     catch
 	exit:Reason ->
-	    io:format("tellstick_drv: crash=~p\n", [Reason]),
-%%	    Error
-	    ok;
+	    ?dbg("~p: tellstick_drv: crash=~p\n", [?MODULE, Reason]),
+	    {error,Reason};
 	error:Reason ->
-	    io:format("tellstick_drv: crash=~p\n", [Reason]),
-%%	    Error
-	    ok
+	    ?dbg("~p: tellstick_drv: crash=~p\n", [?MODULE, Reason]),
+	    {error,Reason}
     end.
     
     
+print_item(Item) ->
+    io:format("Item = {Rid = ~.16#, Rchan = ~p, Lchan ~p, Type = ~p, Unit = ~p, Chan = ~p, Active = ~p, Level = ~p, Flags = ",
+	      [Item#item.rid, Item#item.rchan, Item#item.lchan, Item#item.type,
+	       Item#item.unit, Item#item.chan, Item#item.active, Item#item.level]),
+    print_flags(Item#item.flags).
+
+print_flags([]) ->
+    io:format("}\n");
+print_flags([Flag | Tail]) ->
+    io:format("~p ",[Flag]),
+    print_flags(Tail).
+    
+  

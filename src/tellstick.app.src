@@ -1,0 +1,14 @@
+{application, tellstick,
+ [
+  {description, "Tellstick application"},
+  {vsn, "1"},
+  {registered, [tellstick]},
+  {applications, [
+                  kernel,
+                  stdlib,
+		  canopen
+                 ]},
+  {modules,[tellstick,tellstick_drv,tellstick_sup]},
+  {mod, {tellstick, []}},
+  {env, []}
+ ]}.
