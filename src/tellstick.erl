@@ -15,7 +15,7 @@
 -include_lib("canopen/include/canopen.hrl").
 -include_lib("canopen/include/co_app.hrl").
 %% API
--export([start/0, start/2, start_link/1, stop/0]).
+-export([start/0, start/2, stop/1, start_link/1, stop/0]).
 -export([reload/0, reload/1, dump/0]).
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -89,17 +89,20 @@
 %%--------------------------------------------------------------------
 start(_StartType, _StartArgs) ->
     io:format("~p: start: Starting up\n", [?MODULE]),
-    Args = 
-	case application:get_env(tellstick) of
-	    undefined -> []; %% Test
-	    {ok,As} -> As
-	end,
-    io:format("~p: start: Args=~p\n", [?MODULE,Args]),
-    tellstick_sup:start_link(Args).
+    case application:get_env(conf) of
+	{ok, File} ->     
+	    io:format("~p: start: File =~p\n", [?MODULE,File]),
+	    tellstick_sup:start_link(File);
+	undefined -> 
+	    {error, no_configuration_file_in_env}
+    end.
 
 start() ->
-    start(normal, []).
+    start_link("tellstick_co.conf").
+   
 
+stop(_State) ->
+    ok.
 
 %%--------------------------------------------------------------------
 %% @spec start_link(Args) -> {ok, Pid} | ignore | {error, Error}
@@ -110,9 +113,7 @@ start() ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-start_link(Args) ->
-    io:format("~p: start_link: Args=~p\n", [?MODULE,Args]),
-    File = proplists:get_value(conf, Args, "tellstick_co.conf"),
+start_link(File) ->
     ConfFile = filename:join(code:priv_dir(tellstick), File),
     io:format("~p: start_link: File=~p\n", [?MODULE,ConfFile]),
     gen_server:start_link({local, ?SERVER}, ?MODULE, [{config,ConfFile}], []).
@@ -202,7 +203,7 @@ init([{config,File}]) ->
 	    process_flag(trap_exit, true),
 	    {ok, #state { co_node = Conf#conf.serial, node_id = Nid, items=Conf#conf.items }};
 	Error ->
-	    ?dbg("~p: init: Not possible to lad configuration file ~p.\n",
+	    ?dbg("~p: init: Not possible to load configuration file ~p.\n",
 				 [?MODULE, File]),
 	    {stop, Error}
     end.
@@ -269,6 +270,16 @@ handle_call(dump, _From, State) ->
     lists:foreach(fun(Item) -> print_item(Item) end, State#state.items),
     {reply, ok, State};
 handle_call(stop, _From, State) ->
+    ?dbg("~p: stop:\n",[?MODULE]),
+    case whereis(list_to_atom(co_lib:serial_to_string(State#state.co_node))) of
+	undefined -> 
+	    do_nothing; %% Not possible to detach and unsubscribe
+	_Pid ->
+	    unsubscribe(State#state.co_node),
+	    ?dbg("~p: stop: unsubscribed.\n",[?MODULE]),
+	    co_node:detach(State#state.co_node)
+    end,
+    ?dbg("~p: stop: detached.\n",[?MODULE]),
     {stop, normal, ok, State};
 handle_call(_Request, _From, State) ->
     {reply, {error,bad_call}, State}.
@@ -330,6 +341,7 @@ handle_info({notify, RemoteId, Index, SubInd, Value}, State) ->
 	    end
     end;
 handle_info({'EXIT', _Pid, co_node_terminated}, State) ->
+    ?dbg("~p: handle_info: co_node terminated.\n",[?MODULE]),
     {stop, co_node_terminated, ok, State};    
 handle_info(Info, State) ->
     ?dbg("~p: handle_info: Unknown Info ~p\n", [?MODULE, Info]),
@@ -346,17 +358,8 @@ handle_info(Info, State) ->
 %% @spec terminate(Reason, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
-terminate(Reason, State) ->
+terminate(Reason, _State) ->
     ?dbg("~p: terminate: Reason = ~p\n",[?MODULE, Reason]),
-    case whereis(list_to_atom(canopen:serial_to_string(State#state.co_node))) of
-	undefined -> 
-	    do_nothing; %% Not possible to detach and unsubscribe
-	_Pid ->
-	    co_node:detach(State#state.co_node),
-	    ?dbg("~p: terminate: detached.\n",[?MODULE]),
-	    unsubscribe(State#state.co_node)
-    end,
-    ?dbg("~p: terminate: unsubscribed.\n",[?MODULE]),
     tellstick_drv:stop(),
     ?dbg("~p: terminate: driver stopped.\n",[?MODULE]),
     ok.

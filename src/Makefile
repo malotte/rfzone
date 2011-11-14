@@ -1,20 +1,19 @@
 #
-# Make the pds proto
+# Make the tellstick application
 #
-ERLC = erlc
-
-ERL_FLAGS = -Wall 
-DIA_FLAGS =
-
 MODULES = \
 	tellstick_drv \
+	tellstick_sup \
 	tellstick 
 
+ERLC = erlc
 EBIN = ../ebin
+
+ERL_FLAGS = -Wall 
 
 override ERLC_FLAGS += $(ERL_FLAGS)
 
-debug: ERLC_FLAGS += +debug_info -Ddebug -W
+debug: ERLC_FLAGS += +debug_info -Ddebug
 
 OBJS = $(MODULES:%=$(EBIN)/%.beam)
 
