@@ -4,7 +4,9 @@
 MODULES = \
 	tellstick_drv \
 	tellstick_sup \
-	tellstick 
+	tellstick \
+	tellstick_node
+
 
 ERLC = erlc
 EBIN = ../ebin

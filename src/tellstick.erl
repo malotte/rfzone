@@ -197,7 +197,9 @@ init([{config,File}]) ->
 			    tellstick_drv:start([{device,Device}])
 		    end
 	    end,
-	    {ok, Nid} = co_node:attach(Conf#conf.serial),
+	    {ok, _Dict} = co_node:attach(Conf#conf.serial),
+	    {xnodeid, ID} = co_node:get_option(Conf#conf.serial, xnodeid),
+	    Nid = ID bor ?COBID_ENTRY_EXTENDED,
 	    subscribe(Conf#conf.serial),
 	    power_on(Nid, Conf#conf.items),
 	    process_flag(trap_exit, true),
@@ -241,7 +243,8 @@ handle_call({reload, File}, _From, State) ->
     case load_config(File) of
 	{ok,Conf} ->
 	    NewCoNode = Conf#conf.serial,
-	    Nid = (Conf#conf.serial bsr 8) bor ?CAN_EFF_FLAG,
+	    {xnodeid, ID} = co_node:get_option(Conf#conf.serial, xnodeid),
+	    Nid = ID bor ?COBID_ENTRY_EXTENDED,
 	    case State#state.co_node  of
 		NewCoNode  ->
 		    no_change;
