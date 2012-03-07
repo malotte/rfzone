@@ -14,19 +14,17 @@
 -include_lib("can/include/can.hrl").
 -include_lib("canopen/include/canopen.hrl").
 -include_lib("canopen/include/co_app.hrl").
+-include_lib("canopen/include/co_debug.hrl").
+
 %% API
--export([start/0, start/2, stop/1, start_link/1, stop/0]).
--export([reload/0, reload/1, dump/0]).
+-export([start_link/1, stop/0]).
+-export([reload/0, reload/1]).
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
 %% Testing
--ifdef(debug).
--define(dbg(Fmt,As), io:format((Fmt), (As))).
--else.
--define(dbg(Fmt,As), ok).
--endif.
+-export([start/0, debug/1, dump/0]).
 
 -define(SERVER, ?MODULE). 
 -define(COMMANDS,[{{?MSG_POWER_ON, 0}, ?INTEGER, 0},
@@ -38,7 +36,7 @@
 
 -record(conf,
 	{
-	  serial,
+	  co_id,
 	  product,
 	  device,
 	  items
@@ -72,39 +70,6 @@
 %%% API
 %%%===================================================================
 %%--------------------------------------------------------------------
-%% @private
-%% @spec start(StartType, StartArgs) -> {ok, Pid} |
-%%                                      {ok, Pid, State} |
-%%                                      {error, Reason}
-%%      StartType = normal | {takeover, Node} | {failover, Node}
-%%      StartArgs = term()
-%% @doc
-%% This function is called whenever an application is started using
-%% application:start/[1,2], and should start the processes of the
-%% application. If the application is structured according to the OTP
-%% design principles as a supervision tree, this means starting the
-%% top supervisor of the tree.
-%%
-%% @end
-%%--------------------------------------------------------------------
-start(_StartType, _StartArgs) ->
-    io:format("~p: start: Starting up\n", [?MODULE]),
-    case application:get_env(conf) of
-	{ok, File} ->     
-	    io:format("~p: start: File =~p\n", [?MODULE,File]),
-	    tellstick_sup:start_link(File);
-	undefined -> 
-	    {error, no_configuration_file_in_env}
-    end.
-
-start() ->
-    start_link("tellstick_co.conf").
-   
-
-stop(_State) ->
-    ok.
-
-%%--------------------------------------------------------------------
 %% @spec start_link(Args) -> {ok, Pid} | ignore | {error, Error}
 %%
 %% @doc
@@ -113,10 +78,8 @@ stop(_State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-start_link(File) ->
-    ConfFile = filename:join(code:priv_dir(tellstick), File),
-    io:format("~p: start_link: File=~p\n", [?MODULE,ConfFile]),
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [{config,ConfFile}], []).
+start_link(Args) ->
+    gen_server:start_link({local, ?SERVER}, ?MODULE, Args, []).
 
 
 %%--------------------------------------------------------------------
@@ -139,7 +102,7 @@ stop() ->
 %% @end
 %%--------------------------------------------------------------------
 reload() ->
-    File = filename:join(code:priv_dir(tellstick), "tellstick_co.conf"),
+    File = filename:join(code:priv_dir(tellstick), "tellstick.conf"),
     gen_server:call(?SERVER, {reload, File}).
 
 %%--------------------------------------------------------------------
@@ -153,17 +116,19 @@ reload() ->
 reload(File) ->
     gen_server:call(?SERVER, {reload, File}).
 
-%%--------------------------------------------------------------------
-%% @spec dump() -> ok | {error, Error}
-%%
-%% @doc
-%% Dumps the loop data to standard output.
-%%
-%% @end
-%%--------------------------------------------------------------------
+%% Test functions
+%% @private
 dump() ->
     gen_server:call(?SERVER, dump).
 
+%% @private
+debug(TrueOrFalse) when is_boolean(TrueOrFalse) ->
+    gen_server:call(?SERVER, {debug, TrueOrFalse}).
+
+%% @private
+start() ->
+    start_link([{debug, true}]).
+   
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -180,33 +145,40 @@ dump() ->
 %%                     {stop, Reason}
 %% @end
 %%--------------------------------------------------------------------
-init([{config,File}]) ->
-    case load_config(File) of
-	{ok, Conf} ->
+init(Args) ->
+    Dbg = proplists:get_value(debug, Args, false),
+    put(dbg, Dbg),
+    Simulated = proplists:get_value(simulated, Args, false),
 
-	    if Conf#conf.device =:= undefined ->
-		    tellstick_drv:start();
+    FileName = proplists:get_value(config, Args, "tellstick.conf"),
+    ConfFile = filename:join(code:priv_dir(tellstick), FileName),
+    io:format("~p: init: File=~p\n", [?MODULE,ConfFile]),
+    case load_config(ConfFile) of
+	{ok, Conf} ->
+	    if Simulated ->
+		    ?dbg(?SERVER,"init: Executing in simulated mode.\n",[]), 
+		    {ok, _Pid} = tellstick_drv:start([{device,simulated},
+						      {debug, get(dbg)}]);
+		Conf#conf.device =:= undefined ->
+		    ?dbg(?SERVER,"init: Driver undefined.\n", []),
+		    {ok, _Pid} = tellstick_drv:start();
 	       true ->
 		    Device = Conf#conf.device,
-		    case file:read_file_info(Device) of
-			{error, _Reason} ->
-			    ?dbg("~p: init: Device ~p non existing, executing in simulated mode.\n",
-				 [?MODULE, Device]),
-			    tellstick_drv:start([{device,simulated}]);
-			_FI ->
-			    tellstick_drv:start([{device,Device}])
-		    end
+		    ?dbg(?SERVER,"init: Device = ~p.\n", [Device]),
+		    {ok, _Pid} = tellstick_drv:start([{device,Device},
+						      {debug, get(dbg)}])
 	    end,
-	    {ok, _Dict} = co_node:attach(Conf#conf.serial),
-	    {xnodeid, ID} = co_node:get_option(Conf#conf.serial, xnodeid),
+	    {ok, _Dict} = co_node:attach(Conf#conf.co_id),
+	    {xnodeid, ID} = co_node:get_option(Conf#conf.co_id, xnodeid),
 	    Nid = ID bor ?COBID_ENTRY_EXTENDED,
-	    subscribe(Conf#conf.serial),
+	    subscribe(Conf#conf.co_id),
 	    power_on(Nid, Conf#conf.items),
 	    process_flag(trap_exit, true),
-	    {ok, #state { co_node = Conf#conf.serial, node_id = Nid, items=Conf#conf.items }};
+	    {ok, #state { co_node = Conf#conf.co_id, node_id = Nid, 
+			  items=Conf#conf.items }};
 	Error ->
-	    ?dbg("~p: init: Not possible to load configuration file ~p.\n",
-				 [?MODULE, File]),
+	    ?dbg(?SERVER,"init: Not possible to load configuration file ~p.\n",
+				 [ConfFile]),
 	    {stop, Error}
     end.
 
@@ -232,18 +204,18 @@ init([{config,File}]) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_call({get, Index, SubInd}, _From, State) ->
-    ?dbg("~p: get ~.16B:~.8B \n",[?MODULE, Index, SubInd]),
+    ?dbg(?SERVER,"get ~.16B:~.8B \n",[Index, SubInd]),
     {reply,{error, ?ABORT_NO_SUCH_OBJECT}, State};
 
 handle_call({set, Index, SubInd, NewValue}, _From, State) ->
-    ?dbg("~p: set ~.16B:~.8B to ~p\n",[?MODULE, Index, SubInd, NewValue]),
+    ?dbg(?SERVER,"set ~.16B:~.8B to ~p\n",[Index, SubInd, NewValue]),
     {reply,{error, ?ABORT_NO_SUCH_OBJECT}, State};
 
 handle_call({reload, File}, _From, State) ->
     case load_config(File) of
 	{ok,Conf} ->
-	    NewCoNode = Conf#conf.serial,
-	    {xnodeid, ID} = co_node:get_option(Conf#conf.serial, xnodeid),
+	    NewCoNode = Conf#conf.co_id,
+	    {xnodeid, ID} = co_node:get_option(Conf#conf.co_id, xnodeid),
 	    Nid = ID bor ?COBID_ENTRY_EXTENDED,
 	    case State#state.co_node  of
 		NewCoNode  ->
@@ -272,17 +244,20 @@ handle_call(dump, _From, State) ->
     io:format("NodeId = ~11.16.0#, Items=\n", [State#state.node_id]),
     lists:foreach(fun(Item) -> print_item(Item) end, State#state.items),
     {reply, ok, State};
+handle_call({debug, TrueOrFalse}, _From, LoopData) ->
+    put(dbg, TrueOrFalse),
+    {reply, ok, LoopData};
 handle_call(stop, _From, State) ->
-    ?dbg("~p: stop:\n",[?MODULE]),
+    ?dbg(?SERVER,"stop:\n",[]),
     case whereis(list_to_atom(co_lib:serial_to_string(State#state.co_node))) of
 	undefined -> 
 	    do_nothing; %% Not possible to detach and unsubscribe
 	_Pid ->
 	    unsubscribe(State#state.co_node),
-	    ?dbg("~p: stop: unsubscribed.\n",[?MODULE]),
+	    ?dbg(?SERVER,"stop: unsubscribed.\n",[]),
 	    co_node:detach(State#state.co_node)
     end,
-    ?dbg("~p: stop: detached.\n",[?MODULE]),
+    ?dbg(?SERVER,"stop: detached.\n",[]),
     {stop, normal, ok, State};
 handle_call(_Request, _From, State) ->
     {reply, {error,bad_call}, State}.
@@ -311,21 +286,21 @@ handle_cast(_Msg, State) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_info({notify, RemoteId, Index = ?MSG_POWER_ON, SubInd, Value}, State) ->
-    ?dbg("~p: handle_info: notify ~.16#: ID=~7.16.0#:~w, Value=~w \n", 
-	      [?MODULE, RemoteId, Index, SubInd, Value]),
+    ?dbg(?SERVER,"handle_info: notify power on ~.16#: ID=~7.16.0#:~w, Value=~w \n", 
+	      [RemoteId, Index, SubInd, Value]),
     remote_power_on(RemoteId, State#state.node_id, State#state.items),
     {noreply, State};    
 handle_info({notify, RemoteId, Index = ?MSG_POWER_OFF, SubInd, Value}, State) ->
-    ?dbg("~p: handle_info: notify ~.16#: ID=~7.16.0#:~w, Value=~w \n", 
-	      [?MODULE, RemoteId, Index, SubInd, Value]),
+    ?dbg(?SERVER,"handle_info: notify power off ~.16#: ID=~7.16.0#:~w, Value=~w \n", 
+	      [RemoteId, Index, SubInd, Value]),
     remote_power_off(RemoteId, State#state.node_id, State#state.items),
     {noreply, State};    
 handle_info({notify, RemoteId, Index, SubInd, Value}, State) ->
-    ?dbg("~p: handle_info: notify ~.16#: ID=~7.16.0#:~w, Value=~w \n", 
-	      [?MODULE, RemoteId, Index, SubInd, Value]),
+    ?dbg(?SERVER,"handle_info: notify ~.16#: ID=~7.16.0#:~w, Value=~w \n", 
+	      [RemoteId, Index, SubInd, Value]),
     case take_item(RemoteId, SubInd, State#state.items) of
 	false ->
-	    ?dbg("~p: take_item = false\n", [?MODULE]),
+	    ?dbg(?SERVER,"take_item = false\n", []),
 	    lists:foreach(fun(Item) -> print_item(Item) end, State#state.items),
 	    {noreply,State};
 	{value,I,Is} ->
@@ -344,10 +319,10 @@ handle_info({notify, RemoteId, Index, SubInd, Value}, State) ->
 	    end
     end;
 handle_info({'EXIT', _Pid, co_node_terminated}, State) ->
-    ?dbg("~p: handle_info: co_node terminated.\n",[?MODULE]),
+    ?dbg(?SERVER,"handle_info: co_node terminated.\n",[]),
     {stop, co_node_terminated, ok, State};    
 handle_info(Info, State) ->
-    ?dbg("~p: handle_info: Unknown Info ~p\n", [?MODULE, Info]),
+    ?dbg(?SERVER,"handle_info: Unknown Info ~p\n", [Info]),
     {noreply, State}.
 
 %%--------------------------------------------------------------------
@@ -362,9 +337,9 @@ handle_info(Info, State) ->
 %% @end
 %%--------------------------------------------------------------------
 terminate(Reason, _State) ->
-    ?dbg("~p: terminate: Reason = ~p\n",[?MODULE, Reason]),
+    ?dbg(?SERVER,"terminate: Reason = ~p\n",[Reason]),
     tellstick_drv:stop(),
-    ?dbg("~p: terminate: driver stopped.\n",[?MODULE]),
+    ?dbg(?SERVER,"terminate: driver stopped.\n",[]),
     ok.
 
 %%--------------------------------------------------------------------
@@ -413,13 +388,14 @@ load_config(File) ->
 load_conf([C | Cs], Conf, Items) ->
     case C of
 	{Rid,Rchan,Type,Unit,Chan,Flags} ->
-	    Item = #item { rid=Rid, rchan=Rchan, lchan=Rchan,
+	    RCobId = translate(Rid),
+	    Item = #item { rid=RCobId, rchan=Rchan, lchan=Rchan,
 			   type=Type, unit=Unit, 
 			   chan=Chan, flags=Flags,
 			   active=false, level=0 },
 	    load_conf(Cs, Conf, [Item | Items]);
-	{serial,Serial1} ->
-	    load_conf(Cs, Conf#conf { serial=Serial1}, Items);
+	{co_id,CoId1} ->
+	    load_conf(Cs, Conf#conf { co_id=CoId1}, Items);
 	{product,Product1} ->
 	    load_conf(Cs, Conf#conf { product=Product1}, Items);
 	{device,Name} ->
@@ -428,15 +404,19 @@ load_conf([C | Cs], Conf, Items) ->
 	    {error, {unknown_config, C}}
     end;
 load_conf([], Conf, Items) ->
-    if Conf#conf.serial =:= undefined ->
-	    {error, no_serial};
+    if Conf#conf.co_id =:= undefined ->
+	    {error, no_co_id};
        Conf#conf.product =:= undefined ->
-	    {ok, Conf#conf { product=(Conf#conf.serial) band 16#ff,
+	    {ok, Conf#conf { product=(Conf#conf.co_id) band 16#ff,
 			     items=Items}};
        true ->
 	    {ok, Conf#conf {items=Items}}
     end.
 
+translate({xcobid, Func, Nid}) ->
+    ?XCOB_ID(co_file:func(Func), Nid);
+translate({cobid, Func, Nid}) ->
+    ?COB_ID(co_file:func(Func), Nid).
 
 power_on(Nid, ItemsToAdd) ->
     power_command(Nid, ?MSG_OUTPUT_ADD, ItemsToAdd).
@@ -491,16 +471,16 @@ digital_input(Nid, I, Is, Value) ->
 	    Active = Value =:= 1,
 	    digital_input_call(Nid, I, Is, Active);
        Digital ->
-	    ?dbg("~p: digital_input: No action\n", [?MODULE]),
+	    ?dbg(?SERVER,"digital_input: No action\n", []),
 	    print_item(I),
 	    [I | Is];
        true ->
-	    ?dbg("~p: Not digital device\n", [?MODULE]),
+	    ?dbg(?SERVER,"Not digital device\n", []),
 	    [I | Is]
     end.
 
 digital_input_call(Nid, I, Is, Active) -> 
-    ?dbg("~p: digital_input: calling driver\n",[?MODULE]),
+    ?dbg(?SERVER,"digital_input: calling driver\n",[]),
     print_item(I),
     case call(I#item.type,[I#item.unit,I#item.chan,Active]) of
 	ok ->
@@ -521,7 +501,7 @@ analog_input(Nid, I, Is, Value) ->
 	    IValue = trunc(Min + (Max-Min)*(Value/65535)),
 	    %% scale Min-Max => 0-65535 (adjusting the slider)
 	    RValue = trunc(65535*((IValue-Min)/(Max-Min))),
-	    ?dbg("~p: analog_input: calling driver\n",[?MODULE]),
+	    ?dbg(?SERVER,"analog_input: calling driver\n",[]),
 	    print_item(I),
 	    case call(I#item.type,[I#item.unit,I#item.chan,IValue]) of
 		ok ->
@@ -536,23 +516,23 @@ analog_input(Nid, I, Is, Value) ->
 
 
 encoder_input(_Nid, I, Is, _Value) ->
-    ?dbg("~p: encoder_input: Not implemented yet\n",[?MODULE]),
+    ?dbg(?SERVER,"encoder_input: Not implemented yet\n",[]),
     [I|Is].
 
 call(Type, Args) ->	       
-    ?dbg("~p: call: Type = ~p, Args = ~p\n", [?MODULE, Type, Args]),
+    ?dbg(?SERVER,"call: Type = ~p, Args = ~p\n", [Type, Args]),
     try apply(tellstick_drv, Type, Args) of
 	ok ->
 	    ok;
 	Error ->
-	    ?dbg("~p: tellstick_drv: error=~p\n", [?MODULE, Error]),
+	    ?dbg(?SERVER,"tellstick_drv: error=~p\n", [Error]),
 	    Error
     catch
 	exit:Reason ->
-	    ?dbg("~p: tellstick_drv: crash=~p\n", [?MODULE, Reason]),
+	    ?dbg(?SERVER,"tellstick_drv: crash=~p\n", [Reason]),
 	    {error,Reason};
 	error:Reason ->
-	    ?dbg("~p: tellstick_drv: crash=~p\n", [?MODULE, Reason]),
+	    ?dbg(?SERVER,"tellstick_drv: crash=~p\n", [Reason]),
 	    {error,Reason}
     end.
     

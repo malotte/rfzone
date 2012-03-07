@@ -10,6 +10,8 @@
 
 -behaviour(gen_server).
 
+-include_lib("canopen/include/co_debug.hrl").
+
 %% API
 -export([start/0, start/1, stop/0]).
 
@@ -21,19 +23,14 @@
 -export([nexa/3, nexax/3, waveman/3, sartano/2, ikea/4, risingsun/3]).
 
 %% Testing
--export([test/0, run_test/1]).
+-export([test/0, run_test/1, debug/1]).
 -define(SERVER, ?MODULE). 
-
--ifdef(debug).
--define(dbg(Fmt,As), io:format((Fmt), (As))).
--else.
--define(dbg(Fmt,As), ok).
--endif.
 
 -record(state, 
 	{
 	  sl,           %% serial port descriptor
-	  device_name   %% device string
+	  device_name,  %% device string
+	  timeout       %% retry timeout
 	}).
 
 -define(TELLSTICK_SEND,  $S).       %% param byte...
@@ -61,7 +58,7 @@
 %% @end
 %%--------------------------------------------------------------------
 start() ->
-    start([debug, {device,"/dev/tty.usbserial-A700eTGD"}]).
+    start([{debug, true}, {device,"/dev/tty.usbserial-A700eTGD"}]).
 
 %%--------------------------------------------------------------------
 %% @spec start(Ops) -> {ok, Pid} | ignore | {error, Error}
@@ -207,6 +204,11 @@ risingsun(Code,Unit,On) when
     gen_server:call(?SERVER, {risingsun,Code,Unit,On}).
 
 
+%% @private
+debug(TrueOrFalse) when is_boolean(TrueOrFalse) ->
+    gen_server:call(?SERVER, {debug, TrueOrFalse}).
+
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -223,6 +225,9 @@ risingsun(Code,Unit,On) when
 %% @end
 %%--------------------------------------------------------------------
 init(Opts) ->
+    Dbg = proplists:get_value(debug, Opts, false),
+    put(dbg, Dbg),
+
     DeviceName = case proplists:lookup(device, Opts) of
 		     none ->
 			 case os:getenv("TELLSTICK_DEVICE") of
@@ -232,26 +237,34 @@ init(Opts) ->
 			 end;
 		     {_,Device} -> Device
 		 end,
-    Speed = 4800,
+    RetryTimeout = proplists:get_value(timeout, Opts, 1),
+    S = #state { device_name=DeviceName, timeout = RetryTimeout},
+
+    case open(S) of
+	{ok, S1} -> {ok, S1};
+	Error -> {stop, Error}
+    end.
+	    
+open(S=#state {device_name = simulated }) ->
+    ?dbg(?SERVER,"TELLSTICK open: simulated\n", []),
+    {ok, S #state { sl=simulated }};
+open(S=#state {device_name = DeviceName, timeout = RetryTimeout }) ->
     %% DOpts = [binary,{baud,Speed},{buftm,1},{bufsz,128},{csize,8},{stopb,1},{parity,0},{mode,raw}],
-    case DeviceName of
-	simulated -> 
-	    ?dbg("TELLSTICK open: ~s\n", [DeviceName]),
-	    S = #state { sl=DeviceName, 
-			 device_name=DeviceName
-		       },
+    Speed = 4800,
+    case sl:open(DeviceName,[{baud,Speed}]) of
+	{ok,SL} ->
+	    ?dbg(?SERVER,"TELLSTICK open: ~s@~w\n", [DeviceName,Speed]),
+	    {ok, S#state { sl=SL }};
+	{error, E} when E == eaccess;
+			E == enoent ->
+	    ?dbg(?SERVER,"open: Port could not be opened, will try again "
+		 "in ~p secs.\n", [RetryTimeout]),
+	    timer:send_after(RetryTimeout * 1000, retry),
 	    {ok, S};
-	_NotSimulated ->
-	    case sl:open(DeviceName,[{baud,Speed}]) of
-		{ok,SL} ->
-		    ?dbg("TELLSTICK open: ~s@~w\n", [DeviceName,Speed]),
-		    S = #state { sl=SL, 
-				 device_name=DeviceName
-			       },
-		    {ok, S};
-		Error ->
-		    {stop, Error}
-	    end
+	Error ->
+	    ?dbg(?SERVER,"open: Driver not started, reason = ~p.\n", 
+		 [Error]),
+	    Error
     end.
 
 
@@ -324,6 +337,10 @@ handle_call({risingsun,Code,Unit,On},_From,State) ->
 	    {reply, {error,Reason}, State}
     end;
 
+handle_call({debug, TrueOrFalse}, _From, LoopData) ->
+    put(dbg, TrueOrFalse),
+    {reply, ok, LoopData};
+
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
 
@@ -354,6 +371,11 @@ handle_cast(_Msg, State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
+handle_info(retry, S) ->
+    case open(S) of
+	{ok, S1} -> {noreply, S1};
+	Error -> {stop, Error, S}
+    end;
 handle_info(_Info, State) ->
     io:format("Got info: ~p\n",  [_Info]),
     {noreply, State}.

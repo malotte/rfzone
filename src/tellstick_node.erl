@@ -17,7 +17,7 @@ serial_os_env() ->
     end.
 
 serial() ->
-    File = filename:join(code:priv_dir(tellstick), "tellstick_co.conf"),
+    File = filename:join(code:priv_dir(tellstick), "tellstick.conf"),
     case file:consult(File) of
 	{ok,Conf} -> 
 	    case proplists:lookup(serial, Conf) of
@@ -27,13 +27,15 @@ serial() ->
 		    serial_os_env()
 	    end;
 	{error,_Reason} ->
-	    io:format("warning: config file tellstick_co.conf not found\n"),
+	    io:format("warning: config file tellstick.conf not found\n"),
 	    serial_os_env()	    
     end.
     
 init() ->
     Serial = serial(),
     File = filename:join(code:priv_dir(canopen), "default.dict"),
+    can_router:start(),
+    can_udp:start(0),
     {ok, _PPid} = co_proc:start_link([]),
     {ok, _NPid} = co_node:start_link([{serial,Serial}, 
 				      {options, [{use_serial_as_xnodeid, true},
@@ -48,6 +50,8 @@ init() ->
 
 start() ->
     Serial = serial(),
+    can_router:start(),
+    can_udp:start(0),
     {ok, _PPid} = co_proc:start_link([]),
     {ok, _NPid} = co_node:start_link([{serial,Serial}, 
 				      {options, [{use_serial_as_xnodeid, true},
@@ -58,4 +62,6 @@ start() ->
 
 stop() ->
     Serial = serial(),
-    co_node:stop(Serial).
+    co_node:stop(Serial),
+    co_proc:stop(),
+    can_router:stop().
