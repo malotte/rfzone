@@ -39,10 +39,12 @@ stop(_StartArgs) ->
 %% Supervisor callbacks
 %% ===================================================================
 
-init(Args) ->
+init(TArgs) ->
     io:format("~p: Starting up\n", [?MODULE]),
-    I = tellstick,
-    Tellstick = {I, {I, start_link, [Args]}, permanent, 5000, worker, [I]},
+    io:format("~p: init: Args = ~p\n", [?MODULE, TArgs]),
+    I = tellstick_srv,
+    Opts = proplists:get_value(options, TArgs, []),	    
+    Tellstick = {I, {I, start_link, [Opts]}, permanent, 5000, worker, [I]},
     io:format("~p: About to start ~p\n", [?MODULE,Tellstick]),
     {ok, { {one_for_one, 0, 300}, [Tellstick]} }.
 

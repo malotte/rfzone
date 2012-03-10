@@ -8,6 +8,6 @@
                   stdlib,
 		  canopen
                  ]},
-  {modules,[tellstick,tellstick_drv,tellstick_sup]},
+  {modules,[tellstick, tellstick_srv, tellstick_drv, tellstick_sup]},
   {mod, {tellstick, []}}
  ]}.
