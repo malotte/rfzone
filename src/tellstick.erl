@@ -4,8 +4,9 @@
 %%% @doc
 %%%    Tellstick control application.
 %%%    For detailed description of the functionality see the overview.
+%%%
+%%% Created :  5 Jul 2010 by Tony Rogvall
 %%% @end
-%%% Created :  5 Jul 2010 by Tony Rogvall <tony@rogvall.se>
 %%%-------------------------------------------------------------------
 -module(tellstick).
 
@@ -19,30 +20,38 @@
 %%% API
 %%%===================================================================
 %%--------------------------------------------------------------------
-%% @private
-%% @spec start(StartType, StartArgs) -> {ok, Pid} |
-%%                                      {ok, Pid, State} |
-%%                                      {error, Reason}
-%%      StartType = normal | {takeover, Node} | {failover, Node}
-%%      StartArgs = term()
 %% @doc
-%% This function is called whenever an application is started using
-%% application:start/[1,2], and should start the processes of the
-%% application. If the application is structured according to the OTP
-%% design principles as a supervision tree, this means starting the
-%% top supervisor of the tree.
+%% Starts the application.<br/>
+%% Arguments are ignored, instead the options for the application server is 
+%% retreived from the application environment (sys.config).
 %%
 %% @end
 %%--------------------------------------------------------------------
+-spec start(StartType:: normal | 
+			{takeover, Node::atom()} | 
+			{failover, Node::atom()}, 
+	    StartArgs::term()) -> 
+		   {ok, Pid::pid()} |
+		   {ok, Pid::pid(), State::term()} |
+		   {error, Reason::term()}.
+
 start(_StartType, _StartArgs) ->
-    io:format("~p: Starting up\n", [?MODULE]),
+    %% io:format("~p: Starting up\n", [?MODULE]),
     Opts = case application:get_env(options) of
 	       undefined -> [];
 	       {ok, O} -> O
 	   end,
     Args = [{options, Opts}],
-    io:format("~p: Args=~p\n", [?MODULE,Args]),
+    %% io:format("~p: Args=~p\n", [?MODULE,Args]),
     tellstick_sup:start_link(Args).
 
+%%--------------------------------------------------------------------
+%% @doc
+%% Stops the application.
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec stop(State::term()) -> ok | {error, Error::term()}.
+
 stop(_State) ->
-    ok.
+    exit(stopped).

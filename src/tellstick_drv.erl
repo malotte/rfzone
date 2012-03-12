@@ -2,9 +2,10 @@
 %%% @author Tony Rogvall <tony@rogvall.se>
 %%% @copyright (C) 2010, Tony Rogvall
 %%% @doc
-%%%     TELLSTICK command server
+%%%     TELLSTICK driver.
+%%%
+%%% Created :  1 Jul 2010 by Tony Rogvall 
 %%% @end
-%%% Created :  1 Jul 2010 by Tony Rogvall <tony@rogvall.se>
 %%%-------------------------------------------------------------------
 -module(tellstick_drv).
 
@@ -13,7 +14,7 @@
 -include_lib("canopen/include/co_debug.hrl").
 
 %% API
--export([start/0, start/1, stop/0]).
+-export([start/1, stop/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -23,10 +24,10 @@
 -export([nexa/3, nexax/3, waveman/3, sartano/2, ikea/4, risingsun/3]).
 
 %% Testing
--export([test/0, run_test/1, debug/1]).
+-export([start/0, test/0, run_test/1, debug/1]).
 -define(SERVER, ?MODULE). 
 
--record(state, 
+-record(ctx, 
 	{
 	  sl,           %% serial port descriptor
 	  device_name,  %% device string
@@ -51,66 +52,58 @@
 %%%===================================================================
 
 %%--------------------------------------------------------------------
-%% @spec start() -> {ok, Pid} | ignore | {error, Error}
 %% @doc
 %% Starts the server.
 %%
+%% Device contains the path to the Device. <br/>
+%% Timeout =/= 0 means that if the driver fails to open the device it
+%% will try again in Timeout seconds.<br/>
+%% Debug controls trace output.<br/>
+%%
 %% @end
 %%--------------------------------------------------------------------
-start() ->
-    start([{debug, true}, {device,"/dev/tty.usbserial-A700eTGD"}]).
+-type start_options()::{device, Device::string() | simulated} |
+		       {retry_timeout, Timeout::timeout()} |
+		       {debug, TrueOrFalse::boolean()}.
 
-%%--------------------------------------------------------------------
-%% @spec start(Ops) -> {ok, Pid} | ignore | {error, Error}
-%% Opts = [{device, Device}]
-%% Device = string() | simulated
-%%
-%% @doc
-%% Starts the server.
-%% Device contains the path to the Device. Default is "/dev/tty.usbserial-A700eTGD"
-%%
-%% @end
-%%--------------------------------------------------------------------
+-spec start(list(Options::start_options())) -> 
+		   {ok, Pid::pid()} | 
+		   ignore | 
+		   {error, Error::term()}.
+
 start(Opts) ->
     gen_server:start({local,?SERVER}, ?MODULE, Opts, []).
 
 %%--------------------------------------------------------------------
-%% @spec stop() -> ok | {error, Error}
-%%
 %% @doc
 %% Stops the server.
 %%
 %% @end
 %%--------------------------------------------------------------------
+-spec stop() -> ok | {error, Error::term()}.
+
 stop() ->
     gen_server:call(?SERVER, stop).
 
 %%--------------------------------------------------------------------
-%% @spec nexa(House, Channel, On) -> ok | {error, Error}
-%%   where
-%%    House = integer()
-%%    Channel = integer()
-%%    On = boolean() | bell
-%%
 %% @doc
-%% Sends a nexa protocol request to the device.
+%% Sends a nexa protocol request to the device.<br/>
 %% House should be in the range [$A - $P]. <br/>
 %% Channel should be in the range [1 - 16]. <br/>
 %%
 %% @end
 %%--------------------------------------------------------------------
+-spec nexa(House::integer(), 
+	   Channel::integer(), 
+	   On::boolean() | bell) -> 
+		  ok | {error, Error::term()}.
+
 nexa(House,Channel,On) when
       House >= $A, House =< $P,
       Channel >= 1, Channel =< 16, (is_boolean(On) orelse On=:=bell) ->
     gen_server:call(?SERVER, {nexa,House,Channel,On}).
 
 %%--------------------------------------------------------------------
-%% @spec nexax(Serial, Channel, Level) -> ok | {error, Error}
-%%   where
-%%    Serial = integer()
-%%    Channel = integer()
-%%    Level = boolean() | bell | integer()
-%%
 %% @doc
 %% Sends a nexax protocol request to the device.
 %% Serial should be in the range [0 - 16#3fffffff]. <br/>
@@ -119,6 +112,11 @@ nexa(House,Channel,On) when
 %%
 %% @end
 %%--------------------------------------------------------------------
+-spec nexax(Serial::integer(), 
+	    Channel::integer(), 
+	    Level::boolean() | bell | integer()) -> 
+		   ok | {error, Error::term()}.
+
 nexax(Serial,Channel,Level) when
       Serial >= 0, Serial =< 16#3ffffff,
       Channel >= 1, Channel =< 16, 
@@ -128,56 +126,53 @@ nexax(Serial,Channel,Level) when
     gen_server:call(?SERVER, {nexax,Serial,Channel,Level}).
 
 %%--------------------------------------------------------------------
-%% @spec waveman(House, Channel, On) -> ok | {error, Error}
-%%   where
-%%    House = integer()
-%%    Channel = integer()
-%%    On = boolean() 
-%%
 %% @doc
-%% Sends a waveman protocol request to the device.
+%% Sends a waveman protocol request to the device.<br/>
 %% House should be in the range [$A - $P]. <br/>
 %% Channel should be in the range [1 - 16]. <br/>
 %%
 %% @end
 %%--------------------------------------------------------------------
+-spec waveman(House::integer(), 
+	      Channel::integer(), 
+	      On::boolean()) -> 
+		     ok | {error, Error::term()}.
+
 waveman(House,Channel,On) when
       House >= $A, House =< $P,
       Channel >= 1, Channel =< 16, is_boolean(On) ->
     gen_server:call(?SERVER, {waveman,House,Channel,On}).    
 
 %%--------------------------------------------------------------------
-%% @spec sartano(Channel, On) -> ok | {error, Error}
-%%   where
-%%    Channel = integer()
-%%    On = boolean() 
-%%
 %% @doc
-%% Sends a sartano protocol request to the device.
+%% Sends a sartano protocol request to the device.<br/>
 %% Channel should be in the range [1 - 16#3ff]. <br/>
 %%
 %% @end
 %%--------------------------------------------------------------------
+-spec sartano(Channel::integer(), 
+	      On::boolean()) -> 
+		     ok | {error, Error::term()}.
+
 sartano(Channel,On) when
     Channel >= 0, Channel =< 16#3FF, is_boolean(On) ->
     gen_server:call(?SERVER, {sartano,Channel,On}).
     
 %%--------------------------------------------------------------------
-%% @spec ikea(system, Channel, Level, Style) -> ok | {error, Error}
-%%   where
-%%    Serial= integer()
-%%    Channel = integer()
-%%    Level = integer()
-%%    Style = 0 | 1
-%%
 %% @doc
-%% Sends a ikea protocol request to the device.
+%% Sends a ikea protocol request to the device.<br/>
 %% Serial should be in the range [1 - 16]. <br/>
 %% Channel should be in the range [1 - 10]. <br/>
 %% Level should be in the range [1 - 10]. <br/>
 %%
 %% @end
 %%--------------------------------------------------------------------
+-spec ikea(System::integer(), 
+	   Channel::integer(), 
+	   Level::integer(), 
+	   Style:: 0 | 1) -> 
+		  ok | {error, Error::term()}.
+
 ikea(System,Channel,Level,Style) when
       System >= 1, System =< 16,
       Channel >= 1, Channel =< 10,
@@ -186,23 +181,36 @@ ikea(System,Channel,Level,Style) when
     gen_server:call(?SERVER, {ikea,System,Channel,Level,Style}).
     
 %%--------------------------------------------------------------------
-%% @spec risingsun(Code, Unit, On) -> ok | {error, Error}
-%%   where
-%%    Code = integer()
-%%    Unit = integer()
-%%    On = boolean() 
-%%
 %% @doc
-%% Sends a risingsun protocol request to the device.
+%% Sends a risingsun protocol request to the device.<br/>
 %% Code should be in the range [1 - 4]. <br/>
 %% Unit should be in the range [1 - 4]. <br/>
 %%
 %% @end
 %%--------------------------------------------------------------------
+-spec risingsun(Code::integer(), 
+		Unit::integer(), 
+		On::boolean()) -> 
+		       ok | {error, Error::term()}.
+
 risingsun(Code,Unit,On) when
       Code >= 1, Code =< 4, Unit >= 1, Unit =< 4, is_boolean(On) ->    
     gen_server:call(?SERVER, {risingsun,Code,Unit,On}).
 
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Starts the server with default values.
+%% Default for Device is "/dev/tty.usbserial-A700eTGD"
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec start() -> 
+		   {ok, Pid::pid()} | ignore | {error, Error::term()}.
+
+start() ->
+    start([{debug, true}, {device,"/dev/tty.usbserial-A700eTGD"}]).
 
 %% @private
 debug(TrueOrFalse) when is_boolean(TrueOrFalse) ->
@@ -215,52 +223,55 @@ debug(TrueOrFalse) when is_boolean(TrueOrFalse) ->
 
 %%--------------------------------------------------------------------
 %% @private
-%% @spec init(Args) -> {ok, State} |
-%%                     {ok, State, Timeout} |
-%%                     ignore |
-%%                     {stop, Reason}
 %% @doc
 %% Initializes the server
 %%
 %% @end
 %%--------------------------------------------------------------------
+-spec init(Opts::list(start_options())) -> 
+		  {ok, Ctx::record()} |
+                     {ok, Ctx::record(), Timeout::timeout()} |
+                     ignore |
+                     {stop, Reason::term()}.
 init(Opts) ->
     Dbg = proplists:get_value(debug, Opts, false),
     put(dbg, Dbg),
 
-    DeviceName = case proplists:lookup(device, Opts) of
-		     none ->
-			 case os:getenv("TELLSTICK_DEVICE") of
-			     false ->
-				 "/dev/tty.usbserial";
-			     Device -> Device
-			 end;
-		     {_,Device} -> Device
-		 end,
+    DeviceName = 
+	case proplists:lookup(device, Opts) of
+	    none ->
+		case os:getenv("TELLSTICK_DEVICE") of
+		    false ->
+			"/dev/tty.usbserial";
+		    Device -> Device
+		end;
+	    {_,Device} -> Device
+	end,
+
     RetryTimeout = proplists:get_value(timeout, Opts, 1),
-    S = #state { device_name=DeviceName, timeout = RetryTimeout},
+    S = #ctx { device_name=DeviceName, timeout = RetryTimeout},
 
     case open(S) of
 	{ok, S1} -> {ok, S1};
 	Error -> {stop, Error}
     end.
 	    
-open(S=#state {device_name = simulated }) ->
+open(Ctx=#ctx {device_name = simulated }) ->
     ?dbg(?SERVER,"TELLSTICK open: simulated\n", []),
-    {ok, S #state { sl=simulated }};
-open(S=#state {device_name = DeviceName, timeout = RetryTimeout }) ->
+    {ok, Ctx#ctx { sl=simulated }};
+open(Ctx=#ctx {device_name = DeviceName, timeout = RetryTimeout }) ->
     %% DOpts = [binary,{baud,Speed},{buftm,1},{bufsz,128},{csize,8},{stopb,1},{parity,0},{mode,raw}],
     Speed = 4800,
     case sl:open(DeviceName,[{baud,Speed}]) of
 	{ok,SL} ->
 	    ?dbg(?SERVER,"TELLSTICK open: ~s@~w\n", [DeviceName,Speed]),
-	    {ok, S#state { sl=SL }};
+	    {ok, Ctx#ctx { sl=SL }};
 	{error, E} when E == eaccess;
 			E == enoent ->
 	    ?dbg(?SERVER,"open: Port could not be opened, will try again "
 		 "in ~p secs.\n", [RetryTimeout]),
 	    timer:send_after(RetryTimeout * 1000, retry),
-	    {ok, S};
+	    {ok, Ctx};
 	Error ->
 	    ?dbg(?SERVER,"open: Driver not started, reason = ~p.\n", 
 		 [Error]),
@@ -270,120 +281,134 @@ open(S=#state {device_name = DeviceName, timeout = RetryTimeout }) ->
 
 %%--------------------------------------------------------------------
 %% @private
-%% @spec handle_call(Request, From, State) ->
-%%                                   {reply, Reply, State} |
-%%                                   {reply, Reply, State, Timeout} |
-%%                                   {noreply, State} |
-%%                                   {noreply, State, Timeout} |
-%%                                   {stop, Reason, Reply, State} |
-%%                                   {stop, Reason, State}
 %% @doc
 %% Handling call messages
 %%
 %% @end
 %%--------------------------------------------------------------------
-handle_call({nexa,House,Channel,On},_From,State) ->
+-type call_request()::
+	{nexa, House::integer(), Channel::integer(), On::boolean() | bell} |
+	{nexax, Serial::integer(), Channel::integer(), Level::boolean() | bell | integer()} |
+	{waveman, House::integer(), Channel::integer(), On::boolean()} |
+	{sartano, Channel::integer(), On::boolean()} |
+	{ikea, System::integer(), Channel::integer(), Level::integer(), Style:: 0 | 1} |
+	{risingsun, Code::integer(), Unit::integer(), On::boolean()} |
+	{debug, TrueOrFalse::boolean()} |
+	stop.
+
+-spec handle_call(Request::call_request(), From::pid(), Ctx::#ctx{}) ->
+			 {reply, Reply::term(), Ctx::#ctx{}} |
+			 {reply, Reply::term(), Ctx::#ctx{}, Timeout::timeout()} |
+			 {noreply, Ctx::#ctx{}} |
+			 {noreply, Ctx::#ctx{}, Timeout::timeout()} |
+			 {stop, Reason::atom(), Reply::term(), Ctx::#ctx{}} |
+			 {stop, Reason::atom(), Ctx::#ctx{}}.
+
+
+handle_call({nexa,House,Channel,On},_From,Ctx) ->
     try nexa_command(House, Channel, On) of
 	Command ->
-	    Res = send_command(State#state.sl, Command),
-	    {reply,Res, State}
+	    Res = send_command(Ctx#ctx.sl, Command),
+	    {reply,Res, Ctx}
     catch
 	error:Reason ->
-	    {reply, {error,Reason}, State}
+	    {reply, {error,Reason}, Ctx}
     end;
-handle_call({nexax,Serial,Channel,Level},_From,State) ->
+handle_call({nexax,Serial,Channel,Level},_From,Ctx) ->
     try nexax_command(Serial, Channel, Level) of
 	Command ->
-	    Res = send_command(State#state.sl, Command),
-	    {reply,Res, State}
+	    Res = send_command(Ctx#ctx.sl, Command),
+	    {reply,Res, Ctx}
     catch
 	error:Reason ->
-	    {reply, {error,Reason}, State}
+	    {reply, {error,Reason}, Ctx}
     end;
-handle_call({waveman,House,Channel,On},_From,State) ->
+handle_call({waveman,House,Channel,On},_From,Ctx) ->
     try waveman_command(House, Channel, On) of
 	Command ->
-	    Res = send_command(State#state.sl, Command),
-	    {reply,Res, State}
+	    Res = send_command(Ctx#ctx.sl, Command),
+	    {reply,Res, Ctx}
     catch
 	error:Reason ->
-	    {reply, {error,Reason}, State}
+	    {reply, {error,Reason}, Ctx}
     end;
-handle_call({sartano,Channel,On},_From,State) ->
+handle_call({sartano,Channel,On},_From,Ctx) ->
     try sartano_command(Channel, On) of
 	Command ->
-	    Res = send_command(State#state.sl, Command),
-	    {reply,Res, State}
+	    Res = send_command(Ctx#ctx.sl, Command),
+	    {reply,Res, Ctx}
     catch
 	error:Reason ->
-	    {reply, {error,Reason}, State}
+	    {reply, {error,Reason}, Ctx}
     end;
-handle_call({ikea,System,Channel,Level,Style},_From,State) ->
+handle_call({ikea,System,Channel,Level,Style},_From,Ctx) ->
     try ikea_command(System,Channel,Level,Style) of
 	Command ->
-	    Res = send_command(State#state.sl, Command),
-	    {reply,Res, State}
+	    Res = send_command(Ctx#ctx.sl, Command),
+	    {reply,Res, Ctx}
     catch
 	error:Reason ->
-	    {reply, {error,Reason}, State}
+	    {reply, {error,Reason}, Ctx}
     end;
-handle_call({risingsun,Code,Unit,On},_From,State) ->
+handle_call({risingsun,Code,Unit,On},_From,Ctx) ->
     try risingsun_command(Code,Unit, On) of
 	Command ->
-	    Res = send_command(State#state.sl, Command),
-	    {reply,Res, State}
+	    Res = send_command(Ctx#ctx.sl, Command),
+	    {reply,Res, Ctx}
     catch
 	error:Reason ->
-	    {reply, {error,Reason}, State}
+	    {reply, {error,Reason}, Ctx}
     end;
 
 handle_call({debug, TrueOrFalse}, _From, LoopData) ->
     put(dbg, TrueOrFalse),
     {reply, ok, LoopData};
 
-handle_call(stop, _From, State) ->
-    {stop, normal, ok, State};
+handle_call(stop, _From, Ctx) ->
+    {stop, normal, ok, Ctx};
 
-handle_call(_Request, _From, State) ->
-    {reply, {error,bad_call}, State}.
+handle_call(_Request, _From, Ctx) ->
+    {reply, {error,bad_call}, Ctx}.
 
 %%--------------------------------------------------------------------
 %% @private
-%% @spec handle_cast(Msg, State) -> {noreply, State} |
-%%                                  {noreply, State, Timeout} |
-%%                                  {stop, Reason, State}
 %% @doc
 %% Handling cast messages
 %%
 %% @end
 %%--------------------------------------------------------------------
-handle_cast(_Msg, State) ->
+-spec handle_cast(Msg::term(), Ctx::record()) -> 
+			 {noreply, Ctx::record()} |
+			 {noreply, Ctx::record(), Timeout::timeout()} |
+			 {stop, Reason::term(), Ctx::record()}.
+
+handle_cast(_Msg, Ctx) ->
     io:format("Got cast: ~p\n",  [_Msg]),
-    {noreply, State}.
+    {noreply, Ctx}.
 
 %%--------------------------------------------------------------------
 %% @private
-%% @spec handle_info(Info, State) -> {noreply, State} |
-%%                                   {noreply, State, Timeout} |
-%%                                   {stop, Reason, State}
 %% @doc
 %% Handling all non call/cast messages
 %%
 %% @end
 %%--------------------------------------------------------------------
+-spec handle_info(Info::retry, Ctx::record()) -> 
+			 {noreply, Ctx::record()} |
+			 {noreply, Ctx::record(), Timeout::timeout()} |
+			 {stop, Reason::term(), Ctx::record()}.
+
 handle_info(retry, S) ->
     case open(S) of
 	{ok, S1} -> {noreply, S1};
 	Error -> {stop, Error, S}
     end;
-handle_info(_Info, State) ->
+handle_info(_Info, Ctx) ->
     io:format("Got info: ~p\n",  [_Info]),
-    {noreply, State}.
+    {noreply, Ctx}.
 
 %%--------------------------------------------------------------------
 %% @private
-%% @spec terminate(Reason, State) -> void()
-%%
 %% @doc
 %% This function is called by a gen_server when it is about to
 %% terminate. It should be the opposite of Module:init/1 and do any
@@ -392,19 +417,24 @@ handle_info(_Info, State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-terminate(_Reason, _State) ->
+-spec terminate(Reason::term(), Ctx::record()) -> 
+		       ok.
+
+terminate(_Reason, _Ctx) ->
     ok.
 
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Convert process state when code is changed
+%% Convert process ctx when code is changed
 %%
-%% @spec code_change(OldVsn, State, Extra) -> {ok, NewState}
 %% @end
 %%--------------------------------------------------------------------
-code_change(_OldVsn, State, _Extra) ->
-    {ok, State}.
+-spec code_change(OldVsn::term(), Ctx::record(), Extra::term()) -> 
+			 {ok, NewCtx::record()}.
+
+code_change(_OldVsn, Ctx, _Extra) ->
+    {ok, Ctx}.
 
 %%%===================================================================
 %%% Internal functions
@@ -678,7 +708,7 @@ xcommand([],T0,T1,T2,T3,Bits) ->
 
 %%
 %% TEST suite from telldus.suite (generated by rfcmd)
-%%
+%% @private
 test() ->
     File = filename:join(code:priv_dir(pds), "telldus.suite"),
     case file:consult(File) of
@@ -688,6 +718,7 @@ test() ->
 	    Error
     end.
 
+%% @private
 run_test([]) ->
     ok;
 run_test([{Prod,Args,Result} | Test]) ->

@@ -21,10 +21,22 @@
 %% API functions
 %% ===================================================================
 
+%%--------------------------------------------------------------------
+%% @doc
+%% Starts the supervisor. <br/>
+%% Arguments are sent on to the supervisor.
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec start_link(Args::list(term())) -> 
+			{ok, Pid::pid()} | 
+			ignore | 
+			{error, Error::term()}.
+
 start_link(Args) ->
     case supervisor:start_link({local, ?MODULE}, ?MODULE, Args) of
 	{ok, Pid} ->
-	    io:format("~p: start_link: started process ~p\n", [?MODULE, Pid]),
+	    %% io:format("~p: start_link: started process ~p\n", [?MODULE, Pid]),
 	    {ok, Pid, {normal, Args}};
 	Error -> 
 	    io:format("~p: start_link: Failed to start process, reason ~p\n", 
@@ -32,16 +44,24 @@ start_link(Args) ->
 	    Error
     end.
 
+%%--------------------------------------------------------------------
+%% @doc
+%% Stops the supervisor.
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec stop(StartArgs::list(term())) -> ok | {error, Error::term()}.
+
 stop(_StartArgs) ->
-    ok.
+    exit(stopped).
 
 %% ===================================================================
 %% Supervisor callbacks
 %% ===================================================================
-
+%% @private
 init(TArgs) ->
-    io:format("~p: Starting up\n", [?MODULE]),
-    io:format("~p: init: Args = ~p\n", [?MODULE, TArgs]),
+    %% io:format("~p: Starting up\n", [?MODULE]),
+    %% io:format("~p: init: Opts = ~p\n", [?MODULE, TArgs]),
     I = tellstick_srv,
     Opts = proplists:get_value(options, TArgs, []),	    
     Tellstick = {I, {I, start_link, [Opts]}, permanent, 5000, worker, [I]},

@@ -1,7 +1,7 @@
 %%
 %%  start wrapper
 %%
-%%
+%% @hidden
 -module(tellstick_node).
 
 -export([init/0, start/0, stop/0]).

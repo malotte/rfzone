@@ -2,10 +2,10 @@
 # Make the tellstick application
 #
 MODULES = \
-	tellstick_app \
-	tellstick_drv \
-	tellstick_sup \
 	tellstick \
+	tellstick_sup \
+	tellstick_srv \
+	tellstick_drv \
 	tellstick_node
 
 
