@@ -41,7 +41,7 @@ These are:
 <li> ?MSG_ENCODER - Control signal for an encoded device (not supported yet).</li>
 </ul>
 
-For translation of the erlang macros to CANopen numeric values see {@link co_app.hrl}.
+For translation of the erlang macros to CANopen numeric values see co_app.hrl.
 
 When receiving ?MSG_POWER_ON and ?MSG_POWER_OFF the application checks 
 whether its configuration contains any items belonging to that node.

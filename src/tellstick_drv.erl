@@ -14,7 +14,7 @@
 -include_lib("canopen/include/co_debug.hrl").
 
 %% API
--export([start/1, stop/0]).
+-export([start_link/1, stop/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -24,7 +24,7 @@
 -export([nexa/3, nexax/3, waveman/3, sartano/2, ikea/4, risingsun/3]).
 
 %% Testing
--export([start/0, test/0, run_test/1, debug/1]).
+-export([start_link/0, test/0, run_test/1, debug/1]).
 -define(SERVER, ?MODULE). 
 
 -record(ctx, 
@@ -66,13 +66,13 @@
 		       {retry_timeout, Timeout::timeout()} |
 		       {debug, TrueOrFalse::boolean()}.
 
--spec start(list(Options::start_options())) -> 
+-spec start_link(list(Options::start_options())) -> 
 		   {ok, Pid::pid()} | 
 		   ignore | 
 		   {error, Error::term()}.
 
-start(Opts) ->
-    gen_server:start({local,?SERVER}, ?MODULE, Opts, []).
+start_link(Opts) ->
+    gen_server:start_link({local,?SERVER}, ?MODULE, Opts, []).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -206,11 +206,11 @@ risingsun(Code,Unit,On) when
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec start() -> 
+-spec start_link() -> 
 		   {ok, Pid::pid()} | ignore | {error, Error::term()}.
 
-start() ->
-    start([{debug, true}, {device,"/dev/tty.usbserial-A700eTGD"}]).
+start_link() ->
+    start_link([{debug, true}, {device,"/dev/tty.usbserial-A700eTGD"}]).
 
 %% @private
 debug(TrueOrFalse) when is_boolean(TrueOrFalse) ->

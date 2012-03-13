@@ -22,7 +22,7 @@
 %%--------------------------------------------------------------------
 %% @doc
 %% Starts the application.<br/>
-%% Arguments are ignored, instead the options for the application server is 
+%% Arguments are ignored, instead the options for the application server are 
 %% retreived from the application environment (sys.config).
 %%
 %% @end
