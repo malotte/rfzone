@@ -1,0 +1,77 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head>
+<title>Test tellstick_SUITE:init_per_suite result</title>
+<meta http-equiv="cache-control" content="no-cache">
+<link rel="stylesheet" href="../../ct_default.css" type="text/css"></head>
+<body>
+
+=== <a href="tellstick_suite.src.html#init_per_suite">source code for tellstick_SUITE:init_per_suite/1</a>
+
+<pre>
+<a name="top"></a>
+=== Test case started with:
+tellstick_SUITE:init_per_suite([{tc_logfile,
+                                    "/Users/malotte/erlang/tellstick/test/ct_run.ct@venus.2012-04-10_15.50.23/erlang.tellstick.tellstick_SUITE.logs/run.2012-04-10_15.50.23/tellstick_suite.init_per_suite.html"},
+                                {tc_group_properties,[]},
+                                {tc_group_path,[]},
+                                {data_dir,
+                                    "/Users/malotte/erlang/tellstick/test/tellstick_SUITE_data/"},
+                                {priv_dir,
+                                    "/Users/malotte/erlang/tellstick/test/ct_run.ct@venus.2012-04-10_15.50.23/erlang.tellstick.tellstick_SUITE.logs/run.2012-04-10_15.50.23/log_private/"}])
+
+=== Current directory is "/Users/malotte/erlang/tellstick/test/ct_run.ct@venus.2012-04-10_15.50.23"
+
+=== Started at 2012-04-10 15:50:23
+
+<br />
+co_proc: start_link: Opts = [{linked,false}]
+
+co_proc: init:
+
+<0.101.0>: co_api: start_link: Serial = false, Opts = [{linked,false},
+                                                       {use_serial_as_xnodeid,
+                                                        true},
+                                                       {load_last_saved,false},
+                                                       {dict_file,
+                                                        "/Users/malotte/erlang/canopen/priv/default.dict"},
+                                                       {max_blksize,7},
+                                                       {vendor,673},
+                                                       {debug,true}]
+
+<a name="end"></a>
+
+
+=== Ended at 2012-04-10 15:50:23
+=== location [{co_api,serial,141},
+              {co_api,start_link,114},
+              {tellstick_node,init,39},
+              {tellstick_SUITE,init_per_suite,<a href="tellstick_suite.src.html#40">44</a>},
+              {test_server,ts_tc,1635},
+              {test_server,run_test_case_eval1,1252},
+              {test_server,run_test_case_eval,1123}]
+=== reason = bad argument
+  in function  co_api:serial/1 (co_api.erl, line 141)
+  in call from co_api:start_link/2 (co_api.erl, line 114)
+  in call from tellstick_node:init/0 (tellstick_node.erl, line 39)
+  in call from tellstick_SUITE:init_per_suite/1 (tellstick_SUITE.erl, line 44)
+  in call from test_server:ts_tc/3 (test_server.erl, line 1635)
+  in call from test_server:run_test_case_eval1/6 (test_server.erl, line 1252)
+  in call from test_server:run_test_case_eval/9 (test_server.erl, line 1123)
+=== 
+*** init_per_suite failed.
+    Skipping all cases.
+</pre>
+<center>
+<br /><hr /><p>
+<a href="../../../all_runs.html">Test run history
+</a>  |  <a href="../../../index.html">Top level test index
+</a>
+</p>
+<div class="copyright">Copyright &copy; 2012 <a href="http://www.erlang.org">Open Telecom Platform</a><br />
+Updated: <!date>Tue Apr 10 2012 15:50:23<!/date><br />
+</div>
+</center>
+</body>
+</html>

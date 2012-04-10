@@ -24,9 +24,6 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
-%% CANOpen extended notify callback
--export([receive_notify/2]).
-
 %% Testing
 -export([start/0, debug/1, dump/0]).
 
@@ -86,7 +83,12 @@
 			{error, Error::term()}.
 
 start_link(Opts) ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, Opts, []).
+    F =	case proplists:get_value(linked,Opts,true) of
+	    true -> start_link;
+	    false -> start
+	end,
+    
+    gen_server:F({local, ?SERVER}, ?MODULE, Opts, []).
 
 
 %%--------------------------------------------------------------------
@@ -124,10 +126,6 @@ reload() ->
 
 reload(File) ->
     gen_server:call(?SERVER, {reload, File}).
-
-receive_notify(Pid, Frame) 
-  when is_pid(Pid) ->
-    gen_server:cast(Pid, {receive_notify, Frame}).
 
 %% Test functions
 %% @private
@@ -171,7 +169,14 @@ init(Args) ->
 	CoNode ->
 	    Simulated = proplists:get_value(simulated, Args, false),
 	    FileName = proplists:get_value(config, Args, "tellstick.conf"),
-	    ConfFile = filename:join(code:priv_dir(tellstick), FileName),
+	    ConfFile = 
+		case filename:dirname(FileName) of
+		    "." when hd(FileName) =/= $. ->
+			filename:join(code:priv_dir(tellstick), FileName);
+		    _ -> 
+			FileName
+		end,
+
 	    ?dbg(?SERVER,"init: File = ~p", [ConfFile]),
 	    case load_config(ConfFile) of
 		{ok, Conf} ->
@@ -191,6 +196,10 @@ init(Args) ->
 		    {ok, _Dict} = co_api:attach(CoNode),
 		    Nid = co_api:get_option(CoNode, id),
 		    subscribe(CoNode),
+		    case proplists:get_value(reset, Args, false) of
+			true -> reset_items(Conf#conf.items);
+			false -> do_nothing
+		    end,
 		    power_on(Nid, Conf#conf.items),
 		    process_flag(trap_exit, true),
 		    {ok, #ctx { co_node = CoNode, node_id = Nid, 
@@ -307,8 +316,9 @@ handle_call(_Request, _From, Ctx) ->
 			 {noreply, Ctx::record(), Timeout::timeout()} |
 			 {stop, Reason::term(), Ctx::record()}.
 
-handle_cast({receive_notify, Frame}, Ctx) ->
+handle_cast({extended_notify, _Index, Frame}, Ctx) ->
     ?dbg(?SERVER,"handle_cast: received notify with frame ~w.",[Frame]),
+    %% Check index ??
     COBID = ?CANID_TO_COBID(Frame#can_frame.id),
     <<_F:1, _Addr:7, Ix:16/little, Si:8, Data:4/binary>> = Frame#can_frame.data,
     ?dbg(?SERVER,"handle_cast: index = ~.16.0#:~w, data = ~w.",[Ix, Si, Data]),
@@ -341,7 +351,7 @@ handle_cast(_Msg, Ctx) ->
 
 handle_info({'EXIT', _Pid, co_node_terminated}, Ctx) ->
     ?dbg(?SERVER,"handle_info: co_node terminated.",[]),
-    {stop, co_node_terminated, ok, Ctx};    
+    {stop, co_node_terminated, Ctx};    
 handle_info(Info, Ctx) ->
     ?dbg(?SERVER,"handle_info: Unknown Info ~p", [Info]),
     {noreply, Ctx}.
@@ -385,8 +395,7 @@ code_change(_OldVsn, Ctx, _Extra) ->
 subscribe(CoNode) ->
     ?dbg(?SERVER,"subscribe: IndexList = ~p",[?COMMANDS]),
     lists:foreach(fun({{Index, _SubInd}, _Type, _Value}) ->
-			  co_api:extended_notify_subscribe(CoNode, Index, 
-							   {?MODULE, receive_notify})
+			  co_api:extended_notify_subscribe(CoNode, Index)
 		  end, ?COMMANDS).
 unsubscribe(CoNode) ->
     ?dbg(?SERVER,"unsubscribe: IndexList = ~p",[?COMMANDS]),
@@ -432,11 +441,19 @@ load_conf([C | Cs], Conf, Items) ->
 	    {error, {unknown_config, C}}
     end;
 load_conf([], Conf, Items) ->
+    Dbg = get(dbg),
+    if Dbg ->
+	    io:format("Loaded configuration: \n ",[]),
+	    lists:foreach(fun(Item) -> print_item(Item) end, Items);
+       true ->
+	    do_nothing
+    end,
     if Conf#conf.product =:= undefined ->
 	    {error, no_product};
        true ->
 	    {ok, Conf#conf {items=Items}}
     end.
+    
 
 
 translate({xcobid, Func, Nid}) ->
@@ -458,18 +475,27 @@ power_command(Nid, Cmd, Items) ->
       end,
       Items).
 
+reset_items(Items) ->
+    lists:foreach(
+      fun(I) ->
+	      ?dbg(?SERVER,"reset_items: resetting ~p, ~.16#, ~.16#", 
+		   [I#item.type,I#item.unit,I#item.chan]),
+ 	      call(I#item.type,[I#item.unit,I#item.chan,false])
+      end,
+      Items).
+
 handle_notify({RemoteId, Index = ?MSG_POWER_ON, SubInd, Value}, Ctx) ->
-    ?dbg(?SERVER,"handle_info: notify power on ~.16#: ID=~7.16.0#:~w, Value=~w", 
+    ?dbg(?SERVER,"handle_notify power on ~.16#: ID=~7.16.0#:~w, Value=~w", 
 	      [RemoteId, Index, SubInd, Value]),
     remote_power_on(RemoteId, Ctx#ctx.node_id, Ctx#ctx.items),
     {noreply, Ctx};    
 handle_notify({RemoteId, Index = ?MSG_POWER_OFF, SubInd, Value}, Ctx) ->
-    ?dbg(?SERVER,"handle_info: notify power off ~.16#: ID=~7.16.0#:~w, Value=~w", 
+    ?dbg(?SERVER,"handle_notify power off ~.16#: ID=~7.16.0#:~w, Value=~w", 
 	      [RemoteId, Index, SubInd, Value]),
     remote_power_off(RemoteId, Ctx#ctx.node_id, Ctx#ctx.items),
     {noreply, Ctx};    
 handle_notify({RemoteId, Index, SubInd, Value}, Ctx) ->
-    ?dbg(?SERVER,"handle_info: notify ~.16#: ID=~7.16.0#:~w, Value=~w", 
+    ?dbg(?SERVER,"handle_notify ~.16#: ID=~7.16.0#:~w, Value=~w", 
 	      [RemoteId, Index, SubInd, Value]),
     case take_item(RemoteId, SubInd, Ctx#ctx.items) of
 	false ->

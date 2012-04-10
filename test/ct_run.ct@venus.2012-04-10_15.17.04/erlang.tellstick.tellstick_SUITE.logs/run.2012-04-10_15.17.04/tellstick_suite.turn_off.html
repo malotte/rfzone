@@ -1,0 +1,66 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head>
+<title>Test tellstick_SUITE:turn_off result</title>
+<meta http-equiv="cache-control" content="no-cache">
+<link rel="stylesheet" href="../../ct_default.css" type="text/css"></head>
+<body>
+
+=== <a href="tellstick_suite.src.html#turn_off">source code for tellstick_SUITE:turn_off/1</a>
+
+<pre>
+<a name="top"></a>
+=== Test case started with:
+tellstick_SUITE:turn_off([{tc_logfile,"/Users/malotte/erlang/tellstick/test/ct_run.ct@venus.2012-04-10_15.17.04/erlang.tellstick.tellstick_SUITE.logs/run.2012-04-10_15.17.04/tellstick_suite.turn_off.html"},
+                          {watchdog,<0.94.0>},
+                          {tc_group_properties,[]},
+                          {tc_group_path,[]},
+                          {data_dir,"/Users/malotte/erlang/tellstick/test/tellstick_SUITE_data/"},
+                          {priv_dir,"/Users/malotte/erlang/tellstick/test/ct_run.ct@venus.2012-04-10_15.17.04/erlang.tellstick.tellstick_SUITE.logs/run.2012-04-10_15.17.04/log_private/"}])
+
+=== Current directory is "/Users/malotte/erlang/tellstick/test/ct_run.ct@venus.2012-04-10_15.17.04"
+
+=== Started at 2012-04-10 15:17:07
+
+<br />
+<div class="default"><b>*** User  2012-04-10 15:17:07.039 ***</b>
+Testcase: turn_off
+</div>
+<0.102.0>: co_node: 03000301: handle_info: CAN frame received
+
+<0.102.0>: co_node: 03000301: handle_can: COBID=27000301
+
+<0.102.0>: co_node: 03000301: handle_dam_mpdo: Index = 16#2801:9
+
+<0.102.0>: co_node: rpdo_value: No reserver for index 16#2801
+
+<0.102.0>: co_node: rpdo_value: set_data failed,error {error,no_such_object}
+
+<0.102.0>: co_node: 03000301: extended_notify: Process <0.113.0> subscribes to index 16#2801
+
+<0.113.0>: tellstick_srv: handle_cast: received notify with frame {can_frame,2264924929,0,<<128,1,40,9,1,0,0,0>>,0,-1}.
+
+<0.113.0>: tellstick_srv: handle_cast: index = 16#2801:9, data = <<1,0,0,0>>.
+
+<0.113.0>: tellstick_srv: handle_info: notify power off 16#27000301: ID=16#2801:9, Value=1
+
+<a name="end"></a>
+
+
+=== Ended at 2012-04-10 15:17:08
+=== successfully completed test case
+=== returned value = ok
+</pre>
+<center>
+<br /><hr /><p>
+<a href="../../../all_runs.html">Test run history
+</a>  |  <a href="../../../index.html">Top level test index
+</a>
+</p>
+<div class="copyright">Copyright &copy; 2012 <a href="http://www.erlang.org">Open Telecom Platform</a><br />
+Updated: <!date>Tue Apr 10 2012 15:17:07<!/date><br />
+</div>
+</center>
+</body>
+</html>

@@ -14,14 +14,32 @@
 -include_lib("canopen/include/co_debug.hrl").
 
 %% API
--export([start_link/1, stop/0]).
+-export([start_link/1, 
+	 stop/0]).
 
 %% gen_server callbacks
--export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-	 terminate/2, code_change/3]).
+-export([init/1, 
+	 handle_call/3, 
+	 handle_cast/2, 
+	 handle_info/2,
+	 terminate/2, 
+	 code_change/3]).
 
 %% Remote control protocols
--export([nexa/3, nexax/3, waveman/3, sartano/2, ikea/4, risingsun/3]).
+-export([nexa/3, 
+	 nexax/3, 
+	 waveman/3, 
+	 sartano/2, 
+	 ikea/4, 
+	 risingsun/3]).
+
+%% Aplied functions
+-export([nexa_command/3, 
+	 nexax_command/3, 
+	 waveman_command/3, 
+	 sartano_command/2, 
+	 ikea_command/4, 
+	 risingsun_command/3]).
 
 %% Testing
 -export([start_link/0, test/0, run_test/1, debug/1]).
@@ -29,9 +47,12 @@
 
 -record(ctx, 
 	{
-	  sl,           %% serial port descriptor
-	  device_name,  %% device string
-	  timeout       %% retry timeout
+	  sl,             %% serial port descriptor
+	  device_name,    %% device string
+	  command,        %% last command
+	  client,         %% last client
+	  reply = (<<>>), %% last reply
+	  timeout         %% retry timeout
 	}).
 
 -define(TELLSTICK_SEND,  $S).       %% param byte...
@@ -305,60 +326,18 @@ open(Ctx=#ctx {device_name = DeviceName, timeout = RetryTimeout }) ->
 			 {stop, Reason::atom(), Ctx::#ctx{}}.
 
 
-handle_call({nexa,House,Channel,On},_From,Ctx) ->
-    try nexa_command(House, Channel, On) of
-	Command ->
-	    Res = send_command(Ctx#ctx.sl, Command),
-	    {reply,Res, Ctx}
-    catch
-	error:Reason ->
-	    {reply, {error,Reason}, Ctx}
-    end;
-handle_call({nexax,Serial,Channel,Level},_From,Ctx) ->
-    try nexax_command(Serial, Channel, Level) of
-	Command ->
-	    Res = send_command(Ctx#ctx.sl, Command),
-	    {reply,Res, Ctx}
-    catch
-	error:Reason ->
-	    {reply, {error,Reason}, Ctx}
-    end;
-handle_call({waveman,House,Channel,On},_From,Ctx) ->
-    try waveman_command(House, Channel, On) of
-	Command ->
-	    Res = send_command(Ctx#ctx.sl, Command),
-	    {reply,Res, Ctx}
-    catch
-	error:Reason ->
-	    {reply, {error,Reason}, Ctx}
-    end;
-handle_call({sartano,Channel,On},_From,Ctx) ->
-    try sartano_command(Channel, On) of
-	Command ->
-	    Res = send_command(Ctx#ctx.sl, Command),
-	    {reply,Res, Ctx}
-    catch
-	error:Reason ->
-	    {reply, {error,Reason}, Ctx}
-    end;
-handle_call({ikea,System,Channel,Level,Style},_From,Ctx) ->
-    try ikea_command(System,Channel,Level,Style) of
-	Command ->
-	    Res = send_command(Ctx#ctx.sl, Command),
-	    {reply,Res, Ctx}
-    catch
-	error:Reason ->
-	    {reply, {error,Reason}, Ctx}
-    end;
-handle_call({risingsun,Code,Unit,On},_From,Ctx) ->
-    try risingsun_command(Code,Unit, On) of
-	Command ->
-	    Res = send_command(Ctx#ctx.sl, Command),
-	    {reply,Res, Ctx}
-    catch
-	error:Reason ->
-	    {reply, {error,Reason}, Ctx}
-    end;
+handle_call({nexa,House,Channel,On},From,Ctx) ->
+    command(nexa_command,[House, Channel, On], Ctx#ctx {client = From});
+handle_call({nexax,Serial,Channel,Level},From,Ctx) ->
+     command(nexax_command, [Serial, Channel, Level], Ctx#ctx {client = From});
+handle_call({waveman,House,Channel,On},From,Ctx) ->
+    command(waveman_command, [House, Channel, On], Ctx#ctx {client = From});
+handle_call({sartano,Channel,On},From,Ctx) ->
+    command(sartano_command,[Channel, On], Ctx#ctx {client = From});
+handle_call({ikea,System,Channel,Level,Style},From,Ctx) ->
+    command(ikea_command, [System,Channel,Level,Style], Ctx#ctx {client = From});
+handle_call({risingsun,Code,Unit,On},From,Ctx) ->
+    command(risingsun_command, [Code,Unit,On], Ctx#ctx {client = From});
 
 handle_call({debug, TrueOrFalse}, _From, LoopData) ->
     put(dbg, TrueOrFalse),
@@ -369,6 +348,21 @@ handle_call(stop, _From, Ctx) ->
 
 handle_call(_Request, _From, Ctx) ->
     {reply, {error,bad_call}, Ctx}.
+
+command(F, Args, Ctx=#ctx {sl = SL}) ->
+    try apply(?MODULE, F, Args) of
+	Command ->
+	    case send_command(SL, Command) of
+		ok ->
+		    %% Wait for confirmation
+		    {noreply,Ctx#ctx {command = Command}};
+		Other ->
+		    {reply, Other, Ctx}
+	    end
+    catch
+	error:Reason ->
+	    {reply, {error,Reason}, Ctx}
+    end.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -383,7 +377,7 @@ handle_call(_Request, _From, Ctx) ->
 			 {stop, Reason::term(), Ctx::record()}.
 
 handle_cast(_Msg, Ctx) ->
-    io:format("Got cast: ~p\n",  [_Msg]),
+    ?dbg(?SERVER,"handle_cast: Unknown message ~p", [_Msg]),
     {noreply, Ctx}.
 
 %%--------------------------------------------------------------------
@@ -399,12 +393,28 @@ handle_cast(_Msg, Ctx) ->
 			 {stop, Reason::term(), Ctx::record()}.
 
 handle_info(retry, S) ->
+    ?dbg(?SERVER,"handle_info: retry open port", []),
     case open(S) of
 	{ok, S1} -> {noreply, S1};
 	Error -> {stop, Error, S}
     end;
+handle_info({_Port, {data, Data}}, Ctx=#ctx {reply = Reply, client = Client}) 
+ when Client =/= undefined ->
+    ?dbg(?SERVER,"handle_info: port data ~p", [Data]),
+    %% Reply from port
+    NewReply = <<Reply/binary, Data/binary>>,
+
+    case binary:split(NewReply, <<$\n>>) of
+	[NewReply] ->
+	    {noreply, Ctx#ctx {reply = NewReply}};
+	[_Reply1, Rest] ->
+	    %% Match against command ???
+	    ?dbg(?SERVER,"handle_info: reply ~p", [_Reply1]),
+	    gen_server:reply(Client, ok),
+	    {noreply, Ctx#ctx {reply = Rest, client = undefined}}
+    end;
 handle_info(_Info, Ctx) ->
-    io:format("Got info: ~p\n",  [_Info]),
+    ?dbg(?SERVER,"handle_info: Unknown info ~p", [_Info]),
     {noreply, Ctx}.
 
 %%--------------------------------------------------------------------

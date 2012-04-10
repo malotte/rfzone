@@ -7,17 +7,6 @@
 == General ==
 The tellstick application enables to send remote control commands from a CANopen node, such as the SeaZone RC application for iPhone/iPod/iPad, via a tellstick device to your electrical equipment. I.e. you can use your phone to turn on the light etc.
 
-
-The tellstick application consists of:
-<ul>
-<li>tellstick - Starts the tellstick application.</li>
-<li>tellstick_sup - Supervisor starting the tellstick server..</li>
-<li>tellstick_srv - Server receiving CANopen messages interpreted by the pds/canopen application.</li>
-<li>tellstick_drv  - Server sending remote control commnds to the tellstick device. </li>
-</ul>
-
-The application reads its configuration from a file, if none specified "tellstick.conf", located in the applications priv-directory, is used as default.
-
 tellstick has support for the following remote control protocols:
 <ul>
 <li>nexa</li>
@@ -28,7 +17,21 @@ tellstick has support for the following remote control protocols:
 <li>risingsun</li>
 </ul>
 
+== User's Guide ==
+In order for tellstick to function the configuration file (default tellstick.conf) must contain the necessary information about the devices to configure.<br/>
+...
+
 == Implementation ==
+The tellstick application consists of:
+<ul>
+<li>tellstick - Starts the tellstick application.</li>
+<li>tellstick_sup - Supervisor starting the tellstick server.</li>
+<li>tellstick_srv - Server receiving CANopen messages interpreted by the pds/canopen application.</li>
+<li>tellstick_drv  - Server sending remote control commnds to the tellstick device. </li>
+</ul>
+
+The application reads its configuration from a file, if none specified "tellstick.conf", located in the applications priv-directory, is used as default.
+
 The application uses the canopen application for getting access to the CANopen network.
 The application attaches to a CANopen node and adds subscriptions for the MPDO messages it wants to receive.
 

@@ -1,0 +1,36 @@
+=== Suite started at 2012-04-10 17:50:54
+=== Starting test, 1 test cases
+=cases         1
+=user          malotte
+=host          venus
+=hosts         venus 
+=emulator_vsn  5.9
+=emulator      beam
+=otp_release   R15B
+=started       2012-04-10 17:50:54
+=case          tellstick_SUITE:init_per_suite
+=logfile       tellstick_suite.init_per_suite.html
+=started       2012-04-10 17:50:54
+=ended         2012-04-10 17:50:54
+=result        ok
+=elapsed       0.04407
+=case          tellstick_SUITE:break
+=logfile       tellstick_suite.break.html
+=started       2012-04-10 17:50:54
+=ended         2012-04-10 17:55:33
+=result        ok
+=elapsed       275.540519
+=case          tellstick_SUITE:end_per_suite
+=logfile       tellstick_suite.end_per_suite.html
+=started       2012-04-10 17:55:33
+=ended         2012-04-10 17:55:33
+=result        ok
+=elapsed       2.15e-4
+=group_time    278.750s
+=== TEST COMPLETE, 1 ok, 0 failed of 1 test cases
+
+=finished      2012-04-10 17:55:33
+=failed        0
+=successful    1
+=user_skipped  0
+=auto_skipped  0

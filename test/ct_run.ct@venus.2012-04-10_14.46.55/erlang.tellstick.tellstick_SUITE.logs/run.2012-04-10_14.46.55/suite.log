@@ -1,0 +1,56 @@
+=== Suite started at 2012-04-10 14:46:55
+=== Starting test, 1 test cases
+=cases         1
+=user          malotte
+=host          venus
+=hosts         venus 
+=emulator_vsn  5.9
+=emulator      beam
+=otp_release   R15B
+=started       2012-04-10 14:46:55
+=case          tellstick_SUITE:init_per_suite
+=logfile       tellstick_suite.init_per_suite.html
+=started       2012-04-10 14:46:55
+=ended         2012-04-10 14:46:55
+=result        ok
+=elapsed       0.114357
+=case          tellstick_SUITE:start_tellstick
+=logfile       tellstick_suite.start_tellstick.html
+=started       2012-04-10 14:46:55
+=ended         2012-04-10 14:46:55
+=result        failed: {{nodedown,not_found},
+                        {gen_server,call,
+                                    [{error,not_found},{attach,<0.108.0>}]}}, unknown
+=== *** FAILED *** test case 1 of 1
+=case          tellstick_SUITE:end_per_suite
+=logfile       tellstick_suite.end_per_suite.html
+=started       2012-04-10 14:46:55
+=ended         2012-04-10 14:46:55
+=result        failed: {{nodedown,not_found},
+                        {gen_server,call,[{error,not_found},stop]}}, [{gen_server,
+                                                                       call,
+                                                                       180},
+                                                                      {tellstick_node,
+                                                                       stop,
+                                                                       65},
+                                                                      {tellstick_SUITE,
+                                                                       end_per_suite,
+                                                                       51},
+                                                                      {test_server,
+                                                                       ts_tc,
+                                                                       1635},
+                                                                      {test_server,
+                                                                       run_test_case_eval1,
+                                                                       1252},
+                                                                      {test_server,
+                                                                       run_test_case_eval,
+                                                                       1123}]
+=== *** FAILED *** end_per_suite
+=group_time    0.262s
+=== TEST COMPLETE, 0 ok, 1 failed of 1 test cases
+
+=finished      2012-04-10 14:46:55
+=failed        1
+=successful    0
+=user_skipped  0
+=auto_skipped  0

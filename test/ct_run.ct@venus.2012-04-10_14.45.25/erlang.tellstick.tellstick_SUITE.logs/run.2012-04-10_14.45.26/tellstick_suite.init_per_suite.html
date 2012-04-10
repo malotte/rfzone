@@ -1,0 +1,76 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head>
+<title>Test tellstick_SUITE:init_per_suite result</title>
+<meta http-equiv="cache-control" content="no-cache">
+<link rel="stylesheet" href="../../ct_default.css" type="text/css"></head>
+<body>
+
+=== <a href="tellstick_suite.src.html#init_per_suite">source code for tellstick_SUITE:init_per_suite/1</a>
+
+<pre>
+<a name="top"></a>
+=== Test case started with:
+tellstick_SUITE:init_per_suite([{tc_logfile,
+                                    "/Users/malotte/erlang/tellstick/test/ct_run.ct@venus.2012-04-10_14.45.25/erlang.tellstick.tellstick_SUITE.logs/run.2012-04-10_14.45.26/tellstick_suite.init_per_suite.html"},
+                                {tc_group_properties,[]},
+                                {tc_group_path,[]},
+                                {data_dir,
+                                    "/Users/malotte/erlang/tellstick/test/tellstick_SUITE_data/"},
+                                {priv_dir,
+                                    "/Users/malotte/erlang/tellstick/test/ct_run.ct@venus.2012-04-10_14.45.25/erlang.tellstick.tellstick_SUITE.logs/run.2012-04-10_14.45.26/log_private/"}])
+
+=== Current directory is "/Users/malotte/erlang/tellstick/test/ct_run.ct@venus.2012-04-10_14.45.25"
+
+=== Started at 2012-04-10 14:45:26
+
+<br />
+warning: config file tellstick.conf not found
+
+co_proc: start_link: Opts = [{linked,false}]
+
+co_proc: init:
+
+<0.97.0>: co_api: start_link: Serial = 50332417, Opts = [{linked,false},
+                                                         {use_serial_as_xnodeid,
+                                                          true},
+                                                         {load_default,false},
+                                                         {dict_file,
+                                                          "/Users/malotte/erlang/canopen/priv/default.dict"},
+                                                         {max_blksize,7},
+                                                         {vendor,673},
+                                                         {debug,true}]
+
+<a name="end"></a>
+
+
+=== Ended at 2012-04-10 14:45:26
+=== location [{tellstick_node,init,40},
+              {tellstick_SUITE,init_per_suite,<a href="tellstick_suite.src.html#40">42</a>},
+              {test_server,ts_tc,1635},
+              {test_server,run_test_case_eval1,1252},
+              {test_server,run_test_case_eval,1123}]
+=== reason = no match of right hand side value {error,
+                                                    "Option load_default unknown."}
+  in function  tellstick_node:init/0 (tellstick_node.erl, line 40)
+  in call from tellstick_SUITE:init_per_suite/1 (tellstick_SUITE.erl, line 42)
+  in call from test_server:ts_tc/3 (test_server.erl, line 1635)
+  in call from test_server:run_test_case_eval1/6 (test_server.erl, line 1252)
+  in call from test_server:run_test_case_eval/9 (test_server.erl, line 1123)
+=== 
+*** init_per_suite failed.
+    Skipping all cases.
+</pre>
+<center>
+<br /><hr /><p>
+<a href="../../../all_runs.html">Test run history
+</a>  |  <a href="../../../index.html">Top level test index
+</a>
+</p>
+<div class="copyright">Copyright &copy; 2012 <a href="http://www.erlang.org">Open Telecom Platform</a><br />
+Updated: <!date>Tue Apr 10 2012 14:45:26<!/date><br />
+</div>
+</center>
+</body>
+</html>
