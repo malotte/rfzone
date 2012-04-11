@@ -6,8 +6,8 @@ an iPhone/iPod/iPhone app.
 
 To use tellstick you need:
 <ul>
-<li>A tellstick usb pin, see www.telldus.com </li>
-<li>A computer running Linux or MacOS (Windows will be available later)</li>
+<li>A tellstick usb pin, see www.telldus.com. </li>
+<li>A computer running Linux or MacOS (Windows will be available later).</li>
 <li>An iPhone/iPod/iPad with the Seazone RC app, available at App Store.</li>
 </ul>
 
@@ -19,7 +19,7 @@ Information on building and installing [Erlang/OTP](http://www.erlang.org)
 can be found [here](https://github.com/erlang/otp/wiki/Installation)
 ([more info](https://github.com/erlang/otp/blob/master/INSTALL.md)).
 
-tellstick is built using rebar that can be found [here](https://github.com/basho/rebar).
+tellstick is built using rebar that can be found [here](https://github.com/basho/rebar), with building instructions [here](https://github.com/basho/rebar/wiki/Building-rebar).
 
 tellstick also requires the following applications to be installed:
 <ul>
@@ -43,8 +43,9 @@ $ git clone git://github.com/malotte/tellstick.git
 
 Arguments to all applicable erlang applications are specified in an erlang configuration file. An example can be found in ["sys.config"](https://github.com/malotte/tellstick/blob/master/sys.config).<br/>
 
-tellstick uses a config file where the devices to control are specified.<br/>
+tellstick uses a config file where the devices to control are specified, the syntax is explained in the file.<br/>
 The device for the tellstick usb pin is also specified in this file. The identity of the device might be based on the serial number that can be found in the hardware configuration.<br/>
+
 Default file is ["tellstick/priv/tellstick.conf"](https://github.com/malotte/tellstick/blob/master/priv/tellstick.conf).<br/>
 Either update this file or create a new at any location and specify that in sys.config.
 
@@ -77,6 +78,7 @@ It is possible to change configuration file using:
 ```
 
 Stop:
+
 ```sh
 >halt().
 ```
@@ -92,7 +94,7 @@ $ rebar generate
 ```
 .
 
-When regenerating a new release the old has to be (re)moved.
+When generating a new release the old has to be (re)moved.
 
 Start node:
 
