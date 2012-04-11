@@ -1,5 +1,6 @@
 %%%-------------------------------------------------------------------
 %%% @author Tony Rogvall <tony@rogvall.se>
+%%% @author Malotte Westman Lönne <malotte@malotte.net>
 %%% @copyright (C) 2010, Tony Rogvall
 %%% @doc
 %%%    Tellstick control server.
@@ -18,14 +19,23 @@
 -include_lib("canopen/include/co_debug.hrl").
 
 %% API
--export([start_link/1, stop/0]).
--export([reload/0, reload/1]).
+-export([start_link/1, 
+	 stop/0]).
+-export([reload/0, 
+	 reload/1]).
+
 %% gen_server callbacks
--export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-	 terminate/2, code_change/3]).
+-export([init/1, 
+	 handle_call/3, 
+	 handle_cast/2, 
+	 handle_info/2,
+	 terminate/2, 
+	 code_change/3]).
 
 %% Testing
--export([start/0, debug/1, dump/0]).
+-export([start/0, 
+	 debug/1, 
+	 dump/0]).
 
 -define(SERVER, ?MODULE). 
 -define(COMMANDS,[{{?MSG_POWER_ON, 0}, ?INTEGER, 0},
@@ -35,14 +45,15 @@
 		  {{?MSG_ENCODER, 0}, ?INTEGER, 0}]).
 
 
+%% 
 -record(conf,
 	{
-	  co_node,
 	  product,
 	  device,
 	  items
 	}).
 
+%% Controlled item
 -record(item,
 	{
 	  %% Remote ID
@@ -55,16 +66,19 @@
 	  unit,     %% serial/unit/house code
 	  chan,     %% device channel
 	  flags=[], %% device flags
+
 	  %% State
 	  active = false,  %% off
 	  level = 0        %% dim level
 	}).
 
+%% Loop data
 -record(ctx,
 	{
-	  co_node, %% 
-	  node_id, 
-	  items    %% conf {ID,CHAN,TYPE,Command}
+	  co_node, %% any identity of co_node i.e. serial | name | nodeid ...
+	  node_id, %% nodeid | xnodeid of co_node, needed in notify
+	           %% should maybe be fetched when needed instead of stored in loop data ??
+	  items    %% controlled items
 	}).
 
 %%%===================================================================
@@ -74,7 +88,6 @@
 %% @doc
 %% Starts the server.
 %% Loads configuration from File.
-%%
 %% @end
 %%--------------------------------------------------------------------
 -spec start_link(Opts::list(term())) -> 
@@ -94,7 +107,6 @@ start_link(Opts) ->
 %%--------------------------------------------------------------------
 %% @doc
 %% Stops the server.
-%%
 %% @end
 %%--------------------------------------------------------------------
 -spec stop() -> ok | {error, Error::term()}.
@@ -106,7 +118,6 @@ stop() ->
 %% @doc
 %% Reloads the default configuration file (tellstick.conf) from the 
 %% default location (the applications priv-dir).
-%%
 %% @end
 %%--------------------------------------------------------------------
 -spec reload() -> ok | {error, Error::term()}.
@@ -118,7 +129,6 @@ reload() ->
 %%--------------------------------------------------------------------
 %% @doc
 %% Reloads the configuration file.
-%%
 %% @end
 %%--------------------------------------------------------------------
 -spec reload(File::atom()) -> 
@@ -169,15 +179,9 @@ init(Args) ->
 	CoNode ->
 	    Simulated = proplists:get_value(simulated, Args, false),
 	    FileName = proplists:get_value(config, Args, "tellstick.conf"),
-	    ConfFile = 
-		case filename:dirname(FileName) of
-		    "." when hd(FileName) =/= $. ->
-			filename:join(code:priv_dir(tellstick), FileName);
-		    _ -> 
-			FileName
-		end,
-
+	    ConfFile =  full_filename(FileName),
 	    ?dbg(?SERVER,"init: File = ~p", [ConfFile]),
+
 	    case load_config(ConfFile) of
 		{ok, Conf} ->
 		    if Simulated ->
@@ -202,7 +206,8 @@ init(Args) ->
 		    end,
 		    power_on(Nid, Conf#conf.items),
 		    process_flag(trap_exit, true),
-		    {ok, #ctx { co_node = CoNode, node_id = Nid, 
+		    {ok, #ctx { co_node = CoNode, 
+				node_id = Nid, 
 				items=Conf#conf.items }};
 		Error ->
 		    ?dbg(?SERVER,
@@ -229,9 +234,8 @@ init(Args) ->
 %% @end
 %%--------------------------------------------------------------------
 -type call_request()::
-	{get, {Index::integer(), SubIndex::integer()}} |
-	{set, {Index::integer(), SubInd::integer()}, Value::term()} |
 	{reload, File::atom()} |
+	{new_co_node, Id::term()} |
 	dump |
 	{debug, TrueOrFalse::boolean()} |
 	stop.
@@ -245,62 +249,55 @@ init(Args) ->
 			 {stop, Reason::atom(), Ctx::#ctx{}}.
 
 
-handle_call({get, {Index, SubInd}}, _From, Ctx) ->
-    ?dbg(?SERVER,"get ~.16B:~.8B",[Index, SubInd]),
-    {reply,{error, ?ABORT_NO_SUCH_OBJECT}, Ctx};
-
-handle_call({set, {Index, SubInd}, NewValue}, _From, Ctx) ->
-    ?dbg(?SERVER,"set ~.16B:~.8B to ~p",[Index, SubInd, NewValue]),
-    {reply,{error, ?ABORT_NO_SUCH_OBJECT}, Ctx};
-
-handle_call({reload, File}, _From, Ctx) ->
+handle_call({reload, File}, _From, Ctx=#ctx {node_id = Nid, items = OldItems}) ->
     ?dbg(?SERVER,"reload ~p",[File]),
-    case load_config(File) of
+    ConfFile = full_filename(File),
+    case load_config(ConfFile) of
 	{ok,Conf} ->
-	    NewCoNode = Conf#conf.co_node,
-	    Nid = co_api:get_option(Conf#conf.co_node, id),
-	    case Ctx#ctx.co_node  of
-		NewCoNode  ->
-		    no_change;
-		OldCoNode ->
-		    unsubscribe(OldCoNode),
-		    co_api:detach(OldCoNode),
-		    co_api:attach(NewCoNode),
-		    subscribe(NewCoNode)
-	    end,
-	    ItemsToAdd = lists:usort(Conf#conf.items) -- 
-		lists:usort(Ctx#ctx.items),
-	    ItemsToRemove = lists:usort(Ctx#ctx.items) -- 
-		lists:usort(Conf#conf.items),
+	    NewItems = Conf#conf.items,
+	    ItemsToAdd = lists:usort(NewItems) -- lists:usort(OldItems),
+	    ItemsToRemove = lists:usort(OldItems) -- lists:usort(NewItems),
 	    power_on(Nid, ItemsToAdd),
 	    power_off(Nid, ItemsToRemove),
-	    %% FIXME: handle changes 
-	    {reply, ok, Ctx#ctx { co_node = NewCoNode,
-				  node_id = Nid,
-				  items=Conf#conf.items}};
+	    {reply, ok, Ctx#ctx {items = NewItems}};
 	Error ->
 	    {reply, Error, Ctx}
     end;
-handle_call(dump, _From, Ctx) ->
-    io:format("Ctx: CoNode = ~11.16.0#, ", [Ctx#ctx.co_node]),
-    io:format("NodeId = ~11.16.0#, Items=\n", [Ctx#ctx.node_id]),
-    lists:foreach(fun(Item) -> print_item(Item) end, Ctx#ctx.items),
+
+handle_call({new_co_node, NewCoNode}, _From, Ctx=#ctx {co_node = NewCoNode}) ->
+    %% No change
     {reply, ok, Ctx};
+handle_call({new_co_node, NewCoNode}, _From, Ctx=#ctx {co_node = OldCoNode}) ->
+    unsubscribe(OldCoNode),
+    co_api:detach(OldCoNode),
+    co_api:attach(NewCoNode),
+    subscribe(NewCoNode),
+    Nid = co_api:get_option(NewCoNode, id),
+    {reply, ok, Ctx#ctx {co_node = NewCoNode, node_id = Nid }};
+
+handle_call(dump, _From, Ctx=#ctx {co_node = CoNode, node_id = Nid, items = Items}) ->
+    io:format("Ctx: CoNode = ~11.16.0#, ", [CoNode]),
+    io:format("NodeId = ~11.16.0#, Items=\n", [Nid]),
+    lists:foreach(fun(Item) -> print_item(Item) end, Items),
+    {reply, ok, Ctx};
+
 handle_call({debug, TrueOrFalse}, _From, Ctx) ->
     put(dbg, TrueOrFalse),
     {reply, ok, Ctx};
-handle_call(stop, _From, Ctx) ->
+
+handle_call(stop, _From, Ctx=#ctx {co_node = CoNode}) ->
     ?dbg(?SERVER,"stop:",[]),
-    case co_api:alive(Ctx#ctx.co_node) of
+    case co_api:alive(CoNode) of
 	true ->
-	    unsubscribe(Ctx#ctx.co_node),
+	    unsubscribe(CoNode),
 	    ?dbg(?SERVER,"stop: unsubscribed.",[]),
-	    co_api:detach(Ctx#ctx.co_node);
+	    co_api:detach(CoNode);
 	false -> 
 	    do_nothing %% Not possible to detach and unsubscribe
     end,
     ?dbg(?SERVER,"stop: detached.",[]),
     {stop, normal, ok, Ctx};
+
 handle_call(_Request, _From, Ctx) ->
     {reply, {error,bad_call}, Ctx}.
 
@@ -392,6 +389,15 @@ code_change(_OldVsn, Ctx, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+full_filename(FileName) ->
+    case filename:dirname(FileName) of
+	"." when hd(FileName) =/= $. ->
+	    filename:join(code:priv_dir(tellstick), FileName);
+	_ -> 
+	    FileName
+    end.
+
+
 subscribe(CoNode) ->
     ?dbg(?SERVER,"subscribe: IndexList = ~p",[?COMMANDS]),
     lists:foreach(fun({{Index, _SubInd}, _Type, _Value}) ->
@@ -431,8 +437,6 @@ load_conf([C | Cs], Conf, Items) ->
 			   chan=Chan, flags=Flags,
 			   active=false, level=0 },
 	    load_conf(Cs, Conf, [Item | Items]);
-	{co_node,CoId1} ->
-	    load_conf(Cs, Conf#conf { co_node=CoId1}, Items);
 	{product,Product1} ->
 	    load_conf(Cs, Conf#conf { product=Product1}, Items);
 	{device,Name} ->
