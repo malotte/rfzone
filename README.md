@@ -49,7 +49,8 @@ Arguments to the erlang applications are specified in "tellstick/rel/files/sys.c
 
 #### Building using rebar
 
-Compile:<br/>
+Compile:
+
 ```sh
 $ cd tellstick
 $ rebar compile
@@ -66,14 +67,16 @@ $ rebar create-node
 ```
 Then you have to update the file"tellstick/rel/files/sys.config" as described above.
 
-Generate release:<br/>
+Generate release:
+
 ```sh
 $ cd rel
 $ rebar generate
 ....
 ```
 
-Start node:<br/>
+Start node:
+
 ```sh
 $ cd rel
 $ tellstick/bin/tellstick 
