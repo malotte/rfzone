@@ -34,7 +34,7 @@ tellstick also requires the following applications to be installed:
 </ul>
 
 To use the tellstick usb pin you need the correct driver installed.
-So far it has been an FTDI driver that can be found [here](http://www.ftdichip.com/), to be sure it might be advisable to check on www.telldus.com.
+So far it has been an FTDI driver that can be found at www.ftdichip.com, to be sure it might be advisable to check on www.telldus.com.
 
 #### Downloading
 
@@ -45,11 +45,12 @@ $ git clone git://github.com/malotte/tellstick.git
 ```
 #### Configurating
 
-tellstick uses a config file where the devices to control are specified.<br/>
-Default file is ["tellstick/priv/tellstick.conf"](https://github.com/malotte/tellstick/blob/master/priv/tellstick.conf).<br/>
-The device for the tellstick usb pin is also specified in this file.
+Arguments to all applicable erlang applications are specified in "sys.config". An example can be found in ["sys.config"](https://github.com/malotte/tellstick/blob/master/sys.config).<br/>
 
-Arguments to the erlang applications are specified in "tellstick/rel/files/sys.config" that is created by rebar create_node and should be configured before rebar generate. An example can be found in ["sys.config"](https://github.com/malotte/tellstick/blob/master/sys.config).<br/>
+tellstick uses a config file where the devices to control are specified.<br/>
+The device for the tellstick usb pin is also specified in this file.<br/>
+Default file is ["tellstick/priv/tellstick.conf"](https://github.com/malotte/tellstick/blob/master/priv/tellstick.conf).<br/>
+Either update this file or create a new at any location and specify it in sys.config.
 
 #### Building using rebar
 
@@ -62,15 +63,30 @@ $ rebar compile
 ==> tellstick (compile)
 ```
 
-To generate a release follow the instructions in 
+There is a quick way to run the application for testing:
+
+```sh
+$ erl -config sys
+>cd("ebin").
+>tellstick:start().
+```
+
+It is possible to change configuration file using:
+
+```sh
+>tellstick_srv:reload(<File>).
+```
+
+To generate a proper release follow the instructions in 
 https://github.com/basho/rebar/wiki/Release-handling.
 
-You have to update the file"tellstick/rel/files/sys.config" as described above <b> before </b> the last step, 
-```sh
-$ rebar generate
-.
+You have to update the file "tellstick/rel/files/sys.config" with your own settings <b> before </b> the last step, 
 ```
-When regenerating the release the old has to be (re)moved.
+$ rebar generate
+```
+.
+
+When regenerating a new release the old has to be (re)moved.
 
 Start node:
 
@@ -80,11 +96,22 @@ $ tellstick/bin/tellstick start
 ```
 
 (If you want to have access to the erlang node use 
-```sh 
+``` 
 console 
 ```
 insteaad of 
-```sh 
+``` 
 start
 ```
 .)
+
+#### Documentation
+
+tellstick is documented using edoc. To generate the documentation do:
+
+```sh
+$ cd tellstick
+$ rebar doc
+```
+
+

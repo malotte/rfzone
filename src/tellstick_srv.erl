@@ -275,9 +275,10 @@ handle_call({new_co_node, NewCoNode}, _From, Ctx=#ctx {co_node = OldCoNode}) ->
     Nid = co_api:get_option(NewCoNode, id),
     {reply, ok, Ctx#ctx {co_node = NewCoNode, node_id = Nid }};
 
-handle_call(dump, _From, Ctx=#ctx {co_node = CoNode, node_id = Nid, items = Items}) ->
-    io:format("Ctx: CoNode = ~11.16.0#, ", [CoNode]),
-    io:format("NodeId = ~11.16.0#, Items=\n", [Nid]),
+handle_call(dump, _From, 
+	    Ctx=#ctx {co_node = CoNode, node_id = {Type,Nid}, items = Items}) ->
+    io:format("Ctx: CoNode = ~p, ", [CoNode]),
+    io:format("NodeId = {~p, ~.16#}, Items=\n", [Type, Nid]),
     lists:foreach(fun(Item) -> print_item(Item) end, Items),
     {reply, ok, Ctx};
 

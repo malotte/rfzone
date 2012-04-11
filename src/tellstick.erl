@@ -13,8 +13,12 @@
 -behaviour(application).
 
 
-%% API
--export([start/2, stop/1]).
+%% Application API
+-export([start/2, 
+	 stop/1]).
+
+%% Shortcut API
+-export([start/0]).
 
 %%%===================================================================
 %%% API
@@ -55,3 +59,10 @@ start(_StartType, _StartArgs) ->
 
 stop(_State) ->
     exit(stopped).
+
+start() ->
+    application:start(eapi),
+    application:start(sl),
+    application:start(can),
+    application:start(canopen),
+    application:start(tellstick).
