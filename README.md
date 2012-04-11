@@ -11,19 +11,15 @@ To use tellstick you need:
 <li>An iPhone/iPod/iPad with the Seazone RC app, available at App Store.</li>
 </ul>
 
-Building
---------
+### Dependencies
 
+To build tellstick you will need a working installation of Erlang R15B (or
+later).<br/>
 Information on building and installing [Erlang/OTP](http://www.erlang.org)
 can be found [here](https://github.com/erlang/otp/wiki/Installation)
 ([more info](https://github.com/erlang/otp/blob/master/INSTALL.md)).
 
 tellstick is built using rebar that can be found [here](https://github.com/basho/rebar).
-
-### Dependencies
-
-To build tellstick you will need a working installation of Erlang R15B (or
-later).
 
 tellstick also requires the following applications to be installed:
 <ul>
@@ -45,15 +41,16 @@ $ git clone git://github.com/malotte/tellstick.git
 ```
 #### Configurating
 
-Arguments to all applicable erlang applications are specified in "sys.config". An example can be found in ["sys.config"](https://github.com/malotte/tellstick/blob/master/sys.config).<br/>
+Arguments to all applicable erlang applications are specified in an erlang configuration file. An example can be found in ["sys.config"](https://github.com/malotte/tellstick/blob/master/sys.config).<br/>
 
 tellstick uses a config file where the devices to control are specified.<br/>
-The device for the tellstick usb pin is also specified in this file.<br/>
+The device for the tellstick usb pin is also specified in this file. The identity of the device might be based on the serial number that can be found in the hardware configuration.<br/>
 Default file is ["tellstick/priv/tellstick.conf"](https://github.com/malotte/tellstick/blob/master/priv/tellstick.conf).<br/>
-Either update this file or create a new at any location and specify it in sys.config.
+Either update this file or create a new at any location and specify that in sys.config.
 
-#### Building using rebar
+#### Building
 
+Rebar will compile all needed dependencies.<br/>
 Compile:
 
 ```sh
@@ -62,6 +59,8 @@ $ rebar compile
 ...
 ==> tellstick (compile)
 ```
+
+#### Running
 
 There is a quick way to run the application for testing:
 
@@ -76,6 +75,8 @@ It is possible to change configuration file using:
 ```sh
 >tellstick_srv:reload(<File>).
 ```
+
+#### Release
 
 To generate a proper release follow the instructions in 
 https://github.com/basho/rebar/wiki/Release-handling.
@@ -99,7 +100,7 @@ $ tellstick/bin/tellstick start
 ``` 
 console 
 ```
-insteaad of 
+instead of 
 ``` 
 start
 ```
