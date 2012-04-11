@@ -44,12 +44,12 @@ $ git clone git://github.com/malotte/tellstick.git
 #### Configurating
 
 tellstick uses a config file where the devices to control are specified.<br/>
-Default file is ["tellstick/priv/tellstick.conf"](https://github.com/malotte/tellstick/priv/tellstick.conf).<br/>
-Arguments to the erlang applications are specified in "tellstick/rel/files/sys.config" that is created by rebar create_node and should be configured before rebar generate. An example can be found in ["sys.config"](https://github.com/malotte/tellstick/sys.config).<br/>
+Default file is ["tellstick/priv/tellstick.conf"](https://github.com/malotte/tellstick/blob/master/priv/tellstick.conf).<br/>
+Arguments to the erlang applications are specified in "tellstick/rel/files/sys.config" that is created by rebar create_node and should be configured before rebar generate. An example can be found in ["sys.config"](https://github.com/malotte/tellstick/blob/master/sys.config).<br/>
 
 #### Building using rebar
 
-Compile:
+Compile:<br/>
 ```sh
 $ cd tellstick
 $ rebar compile
@@ -59,20 +59,21 @@ Recompile: src/
 ==> tellstick (compile)
 ```
 
-First time you need to create a node setup.
+First time you need to create a node setup.<br/>
 ```sh
 $ rebar create-node
 ....
 ```
 Then you have to update the file"tellstick/rel/files/sys.config" as described above.
 
-Generate release:
+Generate release:<br/>
 ```sh
 $ cd rel
 $ rebar generate
 ....
 ```
-Start node:
+
+Start node:<br/>
 ```sh
 $ cd rel
 $ tellstick/bin/tellstick 
