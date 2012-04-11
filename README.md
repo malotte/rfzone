@@ -20,30 +20,32 @@ can be found [here](https://github.com/erlang/otp/wiki/Installation)
 
 tellstick is built using rebar that can be found [here](https://github.com/basho/rebar).
 
-tellstick also requires the following applications:
-sl
-eapi,
-can,
-canopen
-
 ### Dependencies
 
 To build tellstick you will need a working installation of Erlang R15B (or
 later).
 
+tellstick also requires the following applications to be installed:
+<ul>
+<li>[sl](https://github.com/tonyrog/sl)</li>
+<li>[eapi](https://github.com/tonyrog/eapi)</li>
+<li>[can](https://github.com/tonyrog/can)</li>
+<li>[canopen](https://github.com/tonyrog/canopen)</li>
+</ul>
+
 
 #### Downloading
 
-Clone the repositories:
+Clone the repository:
 
 ```sh
-$ git clone git://github.com/tonyrog/canopen.git
+$ git clone git://github.com/malotte/tellstick.git
 ```
 #### Configurating
 
-tellstick uses a config file where the devices to control are specified.
-Default file is "tellstick/priv/tellstick.conf".
-Arguments to the erlang applications are specified in "tellstick/rel/files/sys.config".
+tellstick uses a config file where the devices to control are specified.<br/>
+Default file is ["tellstick/priv/tellstick.conf"](https://github.com/malotte/tellstick/priv/tellstick.conf).<br/>
+Arguments to the erlang applications are specified in "tellstick/rel/files/sys.config".<br/>
 
 #### Building using rebar
 
