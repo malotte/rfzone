@@ -34,7 +34,7 @@ So far it has been an FTDI driver that can be found at www.ftdichip.com, to be s
 
 #### Downloading
 
-Clone the repository:
+Clone the repository in a suitable location:
 
 ```sh
 $ git clone git://github.com/malotte/tellstick.git
@@ -65,15 +65,20 @@ $ rebar compile
 There is a quick way to run the application for testing:
 
 ```sh
-$ erl -config sys
->cd("ebin").
+$ erl -config sys -pa <path>/tellstick/ebin
 >tellstick:start().
 ```
+(Instead of specifing the path to the ebin directory you can set the environment ERL_LIBS.)
 
 It is possible to change configuration file using:
 
 ```sh
 >tellstick_srv:reload(<File>).
+```
+
+Stop:
+```sh
+>halt().
 ```
 
 #### Release
