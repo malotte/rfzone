@@ -1,12 +1,12 @@
 %%%-------------------------------------------------------------------
 %%% @author Tony Rogvall <tony@rogvall.se>
 %%% @author Malotte Westman Lönne <malotte@malotte.net>
-%%% @copyright (C) 2010, Tony Rogvall
+%%% @copyright (C) 2012, Tony Rogvall
 %%% @doc
 %%%    Tellstick control server.
 %%%    For detailed description of the functionality see the overview.
 %%%
-%%% Created :  5 Jul 2010 by Tony Rogvall 
+%%% Created:  5 Jul 2010 by Tony Rogvall 
 %%% @end
 %%%-------------------------------------------------------------------
 -module(tellstick_srv).

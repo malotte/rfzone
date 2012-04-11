@@ -8,7 +8,7 @@ To use tellstick you need:
 <ul>
 <li>A tellstick usb pin, see www.telldus.com </li>
 <li>A computer running Linux or MacOS (Windows will be available later)</li>
-<li>An iPhone/iPod/iPad with the Seazone RC app</li>
+<li>An iPhone/iPod/iPad with the Seazone RC app, available at App Store.</li>
 </ul>
 
 Building
@@ -33,6 +33,8 @@ tellstick also requires the following applications to be installed:
 <li>canopen - https://github.com/tonyrog/canopen</li>
 </ul>
 
+To use the tellstick usb pin you need the correct driver installed.
+So far it has been an FTDI driver that can be found [here](http://www.ftdichip.com/), to be sure it might be advisable to check on www.telldus.com.
 
 #### Downloading
 
@@ -45,6 +47,8 @@ $ git clone git://github.com/malotte/tellstick.git
 
 tellstick uses a config file where the devices to control are specified.<br/>
 Default file is ["tellstick/priv/tellstick.conf"](https://github.com/malotte/tellstick/blob/master/priv/tellstick.conf).<br/>
+The device for the tellstick usb pin is also specified in this file.
+
 Arguments to the erlang applications are specified in "tellstick/rel/files/sys.config" that is created by rebar create_node and should be configured before rebar generate. An example can be found in ["sys.config"](https://github.com/malotte/tellstick/blob/master/sys.config).<br/>
 
 #### Building using rebar
@@ -54,33 +58,33 @@ Compile:
 ```sh
 $ cd tellstick
 $ rebar compile
-Recompile: src/
 ...
-Recompile: src/
 ==> tellstick (compile)
 ```
 
-First time you need to create a node setup.<br/>
-```sh
-$ rebar create-node
-....
-```
-Then you have to update the file"tellstick/rel/files/sys.config" as described above.
+To generate a release follow the instructions in 
+https://github.com/basho/rebar/wiki/Release-handling.
 
-Generate release:
-
+You have to update the file"tellstick/rel/files/sys.config" as described above <b> before </b> the last step, 
 ```sh
-$ cd rel
 $ rebar generate
-....
+.
 ```
+When regenerating the release the old has to be (re)moved.
 
 Start node:
 
 ```sh
 $ cd rel
-$ tellstick/bin/tellstick 
-....
+$ tellstick/bin/tellstick start
 ```
 
-You can also package the release and move it as you please using for example OTP's sys_tool.
+(If you want to have access to the erlang node use 
+```sh 
+console 
+```
+insteaad of 
+```sh 
+start
+```
+.)
