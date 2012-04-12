@@ -32,24 +32,37 @@ tellstick also requires the following applications to be installed:
 To use the tellstick usb pin you need the correct driver installed.
 So far it has been an FTDI driver that can be found at www.ftdichip.com, to be sure it might be advisable to check on www.telldus.com.
 
-#### Downloading
+### Downloading
 
 Clone the repository in a suitable location:
 
 ```sh
 $ git clone git://github.com/malotte/tellstick.git
 ```
-#### Configurating
+### Configurating
+#### Concepts
 
-Arguments to all applicable erlang applications are specified in an erlang configuration file. An example can be found in ["sys.config"](https://github.com/malotte/tellstick/blob/master/sys.config).<br/>
+tellstick and SeaZone RC are communicating using CANOpen over UDP. This means they are addressed by CANOpen node ids. See www.canopensolutions.com for a description of CANOpen. 
+
+In this case the SeaZone RC app is broadcasting messages that are handled by canopen/tellstick after which a reply is sent. For this to work tellstick must be configured to know that the broadcasted messages should be handled by it.
+
+In the SeaZone RC app you can configure the "RemoteId". According to the standard node ids can either be short(11 bits) or extended(27 bits). The SeaZone RC app is configured to use extended node ids.<br/>
+This id should then be included in the tellstick configuration file described below.
+
+In the SeaZone app you must define devices corresponding to the real devices you want to control. Devices can be grouped and also added to panels to get a better overview. The device channel given to a device must correspond to the remote channel configured in tellstick.conf.
+
+#### Files
+
+Arguments to all applicable erlang applications are specified in an erlang configuration file.<br/>
+An example can be found in ["sys.config"](https://github.com/malotte/tellstick/blob/master/sys.config).<br/>
 
 tellstick uses a config file where the devices to control are specified, the syntax is explained in the file.<br/>
-The device for the tellstick usb pin is also specified in this file. The identity of the device might be based on the serial number that can be found in the hardware configuration.<br/>
+The device for the tellstick usb pin is also specified in this file. <br/>
 
 Default file is ["tellstick/priv/tellstick.conf"](https://github.com/malotte/tellstick/blob/master/priv/tellstick.conf).<br/>
 Either update this file or create a new at any location and specify that in sys.config.
 
-#### Building
+### Building
 
 Rebar will compile all needed dependencies.<br/>
 Compile:
@@ -61,7 +74,7 @@ $ rebar compile
 ==> tellstick (compile)
 ```
 
-#### Running
+### Running
 
 There is a quick way to run the application for testing:
 
@@ -83,7 +96,7 @@ Stop:
 >halt().
 ```
 
-#### Release
+### Release
 
 To generate a proper release follow the instructions in 
 https://github.com/basho/rebar/wiki/Release-handling.
@@ -113,7 +126,7 @@ start
 ```
 .)
 
-#### Documentation
+### Documentation
 
 tellstick is documented using edoc. To generate the documentation do:
 
