@@ -34,13 +34,13 @@
 			{error, Error::term()}.
 
 start_link(Args) ->
+    error_logger:info_msg("~p: start_link: args = ~p\n", [?MODULE, Args]),
     case supervisor:start_link({local, ?MODULE}, ?MODULE, Args) of
 	{ok, Pid} ->
-	    %% io:format("~p: start_link: started process ~p\n", [?MODULE, Pid]),
 	    {ok, Pid, {normal, Args}};
 	Error -> 
-	    io:format("~p: start_link: Failed to start process, reason ~p\n", 
-		      [?MODULE, Error]),
+	    error_logger:error_msg("~p: start_link: Failed to start process, "
+				   "reason ~p\n",  [?MODULE, Error]),
 	    Error
     end.
 
@@ -60,11 +60,10 @@ stop(_StartArgs) ->
 %% ===================================================================
 %% @private
 init(TArgs) ->
-    %% io:format("~p: Starting up\n", [?MODULE]),
-    %% io:format("~p: init: Opts = ~p\n", [?MODULE, TArgs]),
+    error_logger:info_msg("~p: init: args = ~p,\n pid = ~p\n", [?MODULE, TArgs, self()]),
     I = tellstick_srv,
     Opts = proplists:get_value(options, TArgs, []),	    
     Tellstick = {I, {I, start_link, [Opts]}, permanent, 5000, worker, [I]},
-    io:format("~p: About to start ~p\n", [?MODULE,Tellstick]),
+    error_logger:info_msg("~p: About to start ~p\n", [?MODULE,Tellstick]),
     {ok, { {one_for_one, 0, 300}, [Tellstick]} }.
 

@@ -5,8 +5,7 @@ MODULES = \
 	tellstick \
 	tellstick_sup \
 	tellstick_srv \
-	tellstick_drv \
-	tellstick_node
+	tellstick_drv 
 
 
 ERLC = erlc

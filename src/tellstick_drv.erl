@@ -93,6 +93,7 @@
 		   {error, Error::term()}.
 
 start_link(Opts) ->
+    error_logger:info_msg("~p: start_link: args = ~p\n", [?MODULE, Opts]),
     gen_server:start_link({local,?SERVER}, ?MODULE, Opts, []).
 
 %%--------------------------------------------------------------------
@@ -255,6 +256,7 @@ debug(TrueOrFalse) when is_boolean(TrueOrFalse) ->
                      ignore |
                      {stop, Reason::term()}.
 init(Opts) ->
+    error_logger:info_msg("~p: init: args = ~p,\n pid = ~p\n", [?MODULE, Opts, self()]),
     Dbg = proplists:get_value(debug, Opts, false),
     put(dbg, Dbg),
 
@@ -666,7 +668,7 @@ reverse_bits_(Bits, I, RBits) ->
 
 
 send_command(simulated, Data) ->
-    io:format("~p: Sending data =~p\n", [?MODULE, Data]),
+    ?dbg(?SERVER,"send_command: Sending data =~p\n", [Data]),
     ok;
 send_command(SL, Data) ->
     Data1 = ascii_data(Data),
@@ -713,7 +715,7 @@ xcommand([],T0,T1,T2,T3,Bits) ->
     U1 = if T1 =:= 0 -> 1; true -> T1 end,
     U2 = if T2 =:= 0 -> 1; true -> T2 end,
     U3 = if T3 =:= 0 -> 1; true -> T3 end,
-    io:format("T0=~w,T=~w,T2=~w,T3=~w,Np=~w\n", [U0,U1,U2,U3,Np]),
+    ?dbg(?SERVER,"xcommand: T0=~w,T=~w,T2=~w,T3=~w,Np=~w\n", [U0,U1,U2,U3,Np]),
     [U0,U1,U2,U3,Np | bitstring_to_list(<<Bits/bits, 0:R>>)].
 
 %%

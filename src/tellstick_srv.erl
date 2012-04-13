@@ -96,6 +96,7 @@
 			{error, Error::term()}.
 
 start_link(Opts) ->
+    error_logger:info_msg("~p: start_link: args = ~p\n", [?MODULE, Opts]),
     F =	case proplists:get_value(linked,Opts,true) of
 	    true -> start_link;
 	    false -> start
@@ -169,6 +170,7 @@ start() ->
 		  {stop, Reason::term()}.
 
 init(Args) ->
+    error_logger:info_msg("~p: init: args = ~p,\n pid = ~p\n", [?MODULE, Args, self()]),
     Dbg = proplists:get_value(debug, Args, false),
     put(dbg, Dbg),
 
@@ -350,8 +352,8 @@ handle_cast(_Msg, Ctx) ->
 handle_info({'EXIT', _Pid, co_node_terminated}, Ctx) ->
     ?dbg(?SERVER,"handle_info: co_node terminated.",[]),
     {stop, co_node_terminated, Ctx};    
-handle_info(Info, Ctx) ->
-    ?dbg(?SERVER,"handle_info: Unknown Info ~p", [Info]),
+handle_info(_Info, Ctx) ->
+    ?dbg(?SERVER,"handle_info: Unknown Info ~p", [_Info]),
     {noreply, Ctx}.
 
 %%--------------------------------------------------------------------
@@ -367,8 +369,8 @@ handle_info(Info, Ctx) ->
 -spec terminate(Reason::term(), Ctx::record()) -> 
 		       ok.
 
-terminate(Reason, _Ctx) ->
-    ?dbg(?SERVER,"terminate: Reason = ~p",[Reason]),
+terminate(_Reason, _Ctx) ->
+    ?dbg(?SERVER,"terminate: Reason = ~p",[_Reason]),
     tellstick_drv:stop(),
     ?dbg(?SERVER,"terminate: driver stopped.",[]),
     ok.
@@ -448,7 +450,7 @@ load_conf([C | Cs], Conf, Items) ->
 load_conf([], Conf, Items) ->
     Dbg = get(dbg),
     if Dbg ->
-	    io:format("Loaded configuration: \n ",[]),
+	    error_logger:info_msg("Loaded configuration: \n ",[]),
 	    lists:foreach(fun(Item) -> print_item(Item) end, Items);
        true ->
 	    do_nothing
@@ -489,14 +491,14 @@ reset_items(Items) ->
       end,
       Items).
 
-handle_notify({RemoteId, Index = ?MSG_POWER_ON, SubInd, Value}, Ctx) ->
+handle_notify({RemoteId, _Index = ?MSG_POWER_ON, _SubInd, _Value}, Ctx) ->
     ?dbg(?SERVER,"handle_notify power on ~.16#: ID=~7.16.0#:~w, Value=~w", 
-	      [RemoteId, Index, SubInd, Value]),
+	      [RemoteId, _Index, _SubInd, _Value]),
     remote_power_on(RemoteId, Ctx#ctx.node_id, Ctx#ctx.items),
     {noreply, Ctx};    
-handle_notify({RemoteId, Index = ?MSG_POWER_OFF, SubInd, Value}, Ctx) ->
+handle_notify({RemoteId, _Index = ?MSG_POWER_OFF, _SubInd, _Value}, Ctx) ->
     ?dbg(?SERVER,"handle_notify power off ~.16#: ID=~7.16.0#:~w, Value=~w", 
-	      [RemoteId, Index, SubInd, Value]),
+	      [RemoteId, _Index, _SubInd, _Value]),
     remote_power_off(RemoteId, Ctx#ctx.node_id, Ctx#ctx.items),
     {noreply, Ctx};    
 handle_notify({RemoteId, Index, SubInd, Value}, Ctx) ->

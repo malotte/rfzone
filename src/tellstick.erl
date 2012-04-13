@@ -40,13 +40,12 @@
 		   {error, Reason::term()}.
 
 start(_StartType, _StartArgs) ->
-    %% io:format("~p: Starting up\n", [?MODULE]),
+    error_logger:info_msg("~p: start: arguments ignored.\n", [?MODULE]),
     Opts = case application:get_env(options) of
 	       undefined -> [];
 	       {ok, O} -> O
 	   end,
     Args = [{options, Opts}],
-    %% io:format("~p: Args=~p\n", [?MODULE,Args]),
     tellstick_sup:start_link(Args).
 
 %%--------------------------------------------------------------------
