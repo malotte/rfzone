@@ -351,7 +351,7 @@ handle_call(stop, _From, Ctx) ->
 handle_call(_Request, _From, Ctx) ->
     {reply, {error,bad_call}, Ctx}.
 
-command(F, Args, Ctx=#ctx {sl = SL}) ->
+command(F, Args, Ctx=#ctx {sl = SL}) when SL =/= undefined ->
     try apply(?MODULE, F, Args) of
 	Command ->
 	    case send_command(SL, Command) of
@@ -364,7 +364,10 @@ command(F, Args, Ctx=#ctx {sl = SL}) ->
     catch
 	error:Reason ->
 	    {reply, {error,Reason}, Ctx}
-    end.
+    end;
+command(F, Args, Ctx) ->
+    error_logger:info_msg("~p: No port defined yet.\n", [?MODULE]),
+    {reply, {error,no_port}, Ctx}.
 
 %%--------------------------------------------------------------------
 %% @private
