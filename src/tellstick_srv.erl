@@ -33,8 +33,7 @@
 	 code_change/3]).
 
 %% Testing
--export([start/0, 
-	 debug/1, 
+-export([debug/1, 
 	 dump/0]).
 
 -define(SERVER, ?MODULE). 
@@ -81,6 +80,15 @@
 	  items    %% controlled items
 	}).
 
+%% For dialyzer
+-type start_options()::{co_node, CoNode::term()} |
+		       {config, File::string()} |
+		       {reset, TrueOrFalse::boolean()} |
+		       {retry_timeout, TimeOut::timeout()} |
+		       {simulated, TrueOrFalse::boolean()} |
+		       {linked, TrueOrFalse::boolean()} |
+		       {debug, TrueOrFalse::boolean()}.
+
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -90,7 +98,7 @@
 %% Loads configuration from File.
 %% @end
 %%--------------------------------------------------------------------
--spec start_link(Opts::list(term())) -> 
+-spec start_link(Opts::list(start_options())) -> 
 			{ok, Pid::pid()} | 
 			ignore | 
 			{error, Error::term()}.
@@ -147,11 +155,6 @@ dump() ->
 debug(TrueOrFalse) when is_boolean(TrueOrFalse) ->
     gen_server:call(?SERVER, {debug, TrueOrFalse}).
 
-%% @private
-start() ->
-    start_link([{debug, true},{co_node, tellstick_node:serial()}, {simulated, true}]).
-   
-
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -163,10 +166,8 @@ start() ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec init(Args::list(term())) -> 
-		  {ok, Ctx::record()} |
-		  {ok, Ctx::record(), Timeout::timeout()} |
-		  ignore |
+-spec init(Args::list(start_options())) -> 
+		  {ok, Ctx::#ctx{}} |
 		  {stop, Reason::term()}.
 
 init(Args) ->
@@ -192,11 +193,15 @@ init(Args) ->
 							      {debug, get(dbg)}]);
 		       Conf#conf.device =:= undefined ->
 			    ?dbg(?SERVER,"init: Driver undefined.", []),
-			    {ok, _Pid} = tellstick_drv:start();
+			    %% How handle ??
+			    {ok, _Pid} = tellstick_drv:start_link([{device,simulated},
+							      {debug, get(dbg)}]);
 		       true ->
 			    Device = Conf#conf.device,
+			    TOut = proplists:get_value(retry_timeout, Args, 1000),
 			    ?dbg(?SERVER,"init: Device = ~p.", [Device]),
 			    {ok, _Pid} = tellstick_drv:start_link([{device,Device},
+								   {retry_timeout, TOut},
 								   {debug, get(dbg)}])
 		    end,
 		    {ok, _Dict} = co_api:attach(CoNode),
@@ -242,13 +247,10 @@ init(Args) ->
 	{debug, TrueOrFalse::boolean()} |
 	stop.
 
--spec handle_call(Request::call_request(), From::pid(), Ctx::#ctx{}) ->
+-spec handle_call(Request::call_request(), From::{pid(), Tag::term()}, Ctx::#ctx{}) ->
 			 {reply, Reply::term(), Ctx::#ctx{}} |
-			 {reply, Reply::term(), Ctx::#ctx{}, Timeout::timeout()} |
 			 {noreply, Ctx::#ctx{}} |
-			 {noreply, Ctx::#ctx{}, Timeout::timeout()} |
-			 {stop, Reason::atom(), Reply::term(), Ctx::#ctx{}} |
-			 {stop, Reason::atom(), Ctx::#ctx{}}.
+			 {stop, Reason::atom(), Reply::term(), Ctx::#ctx{}}.
 
 
 handle_call({reload, File}, _From, Ctx=#ctx {node_id = Nid, items = OldItems}) ->
@@ -311,10 +313,13 @@ handle_call(_Request, _From, Ctx) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec handle_cast(Msg::term(), Ctx::record()) -> 
-			 {noreply, Ctx::record()} |
-			 {noreply, Ctx::record(), Timeout::timeout()} |
-			 {stop, Reason::term(), Ctx::record()}.
+-type cast_msg()::
+	{extended_notify, Index::integer(), Frame::#can_frame{}} |
+	term().
+
+-spec handle_cast(Msg::cast_msg(), Ctx::#ctx{}) -> 
+			 {noreply, Ctx::#ctx{}} |
+			 {stop, Reason::term(), Ctx::#ctx{}}.
 
 handle_cast({extended_notify, _Index, Frame}, Ctx) ->
     ?dbg(?SERVER,"handle_cast: received notify with frame ~w.",[Frame]),
@@ -341,13 +346,13 @@ handle_cast(_Msg, Ctx) ->
 %% @end
 %%--------------------------------------------------------------------
 -type info()::
-	{notify, RemoteId::integer(), Index:: integer(), SubInd::integer(), Value::term()} |
-	{'EXIT', Pid::pid(), co_node_terminated}.
+	{'EXIT', Pid::pid(), co_node_terminated} |
+	term().
 
--spec handle_info(Info::info(), Ctx::record()) -> 
-			 {noreply, Ctx::record()} |
-			 {noreply, Ctx::record(), Timeout::timeout()} |
-			 {stop, Reason::term(), Ctx::record()}.
+-spec handle_info(Info::info(), Ctx::#ctx{}) -> 
+			 {noreply, Ctx::#ctx{}} |
+			 {noreply, Ctx::#ctx{}, Timeout::timeout()} |
+			 {stop, Reason::term(), Ctx::#ctx{}}.
 
 handle_info({'EXIT', _Pid, co_node_terminated}, Ctx) ->
     ?dbg(?SERVER,"handle_info: co_node terminated.",[]),
@@ -358,16 +363,9 @@ handle_info(_Info, Ctx) ->
 
 %%--------------------------------------------------------------------
 %% @private
-%% @doc
-%% This function is called by a gen_server when it is about to
-%% terminate. It should be the opposite of Module:init/1 and do any
-%% necessary cleaning up. When it returns, the gen_server terminates
-%% with Reason. The return value is ignored.
-%%
-%% @end
 %%--------------------------------------------------------------------
--spec terminate(Reason::term(), Ctx::record()) -> 
-		       ok.
+-spec terminate(Reason::term(), Ctx::#ctx{}) -> 
+		       no_return().
 
 terminate(_Reason, _Ctx) ->
     ?dbg(?SERVER,"terminate: Reason = ~p",[_Reason]),
@@ -382,8 +380,8 @@ terminate(_Reason, _Ctx) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec code_change(OldVsn::term(), Ctx::record(), Extra::term()) -> 
-			 {ok, NewCtx::record()}.
+-spec code_change(OldVsn::term(), Ctx::#ctx{}, Extra::term()) -> 
+			 {ok, NewCtx::#ctx{}}.
 
 code_change(_OldVsn, Ctx, _Extra) ->
     {ok, Ctx}.

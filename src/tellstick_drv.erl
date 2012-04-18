@@ -68,6 +68,12 @@
 %% We should probably 430 separatly (it's a + sign!)
 -define(US_TO_ASCII(U), ((U) div 10)).
 
+%% For dialyzer
+-type start_options()::{device, Device::string() | simulated} |
+		       {retry_timeout, TimeOut::timeout()} |
+		       {debug, TrueOrFalse::boolean()}.
+
+
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -83,10 +89,6 @@
 %%
 %% @end
 %%--------------------------------------------------------------------
--type start_options()::{device, Device::string() | simulated} |
-		       {retry_timeout, Timeout::timeout()} |
-		       {debug, TrueOrFalse::boolean()}.
-
 -spec start_link(list(Options::start_options())) -> 
 		   {ok, Pid::pid()} | 
 		   ignore | 
@@ -250,11 +252,12 @@ debug(TrueOrFalse) when is_boolean(TrueOrFalse) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec init(Opts::list(start_options())) -> 
-		  {ok, Ctx::record()} |
-                     {ok, Ctx::record(), Timeout::timeout()} |
-                     ignore |
-                     {stop, Reason::term()}.
+-spec init(list(Options::start_options())) -> 
+		  {ok, Ctx::#ctx{}} |
+		  {ok, Ctx::#ctx{}, Timeout::timeout()} |
+		  ignore |
+		  {stop, Reason::term()}.
+
 init(Opts) ->
     error_logger:info_msg("~p: init: args = ~p,\n pid = ~p\n", [?MODULE, Opts, self()]),
     Dbg = proplists:get_value(debug, Opts, false),
@@ -271,7 +274,7 @@ init(Opts) ->
 	    {_,Device} -> Device
 	end,
 
-    RetryTimeout = proplists:get_value(timeout, Opts, 1),
+    RetryTimeout = proplists:get_value(retry_timeout, Opts, 1000),
     S = #ctx { device_name=DeviceName, timeout = RetryTimeout},
 
     case open(S) of
@@ -283,8 +286,10 @@ open(Ctx=#ctx {device_name = simulated }) ->
     ?dbg(?SERVER,"TELLSTICK open: simulated\n", []),
     {ok, Ctx#ctx { sl=simulated }};
 open(Ctx=#ctx {device_name = DeviceName, timeout = RetryTimeout }) ->
-    %% DOpts = [binary,{baud,Speed},{buftm,1},{bufsz,128},{csize,8},{stopb,1},{parity,0},{mode,raw}],
+
+    %% Only 4800 possible for tellstick ...
     Speed = 4800,
+
     case sl:open(DeviceName,[{baud,Speed}]) of
 	{ok,SL} ->
 	    ?dbg(?SERVER,"TELLSTICK open: ~s@~w\n", [DeviceName,Speed]),
@@ -292,8 +297,8 @@ open(Ctx=#ctx {device_name = DeviceName, timeout = RetryTimeout }) ->
 	{error, E} when E == eaccess;
 			E == enoent ->
 	    ?dbg(?SERVER,"open: Port could not be opened, will try again "
-		 "in ~p secs.\n", [RetryTimeout]),
-	    timer:send_after(RetryTimeout * 1000, retry),
+		 "in ~p millisecs.\n", [RetryTimeout]),
+	    timer:send_after(RetryTimeout, retry),
 	    {ok, Ctx};
 	Error ->
 	    ?dbg(?SERVER,"open: Driver not started, reason = ~p.\n", 
@@ -319,13 +324,10 @@ open(Ctx=#ctx {device_name = DeviceName, timeout = RetryTimeout }) ->
 	{debug, TrueOrFalse::boolean()} |
 	stop.
 
--spec handle_call(Request::call_request(), From::pid(), Ctx::#ctx{}) ->
+-spec handle_call(Request::call_request(), From::{pid(), Tag::term()}, Ctx::#ctx{}) ->
 			 {reply, Reply::term(), Ctx::#ctx{}} |
-			 {reply, Reply::term(), Ctx::#ctx{}, Timeout::timeout()} |
 			 {noreply, Ctx::#ctx{}} |
-			 {noreply, Ctx::#ctx{}, Timeout::timeout()} |
-			 {stop, Reason::atom(), Reply::term(), Ctx::#ctx{}} |
-			 {stop, Reason::atom(), Ctx::#ctx{}}.
+			 {stop, Reason::atom(), Reply::term(), Ctx::#ctx{}}.
 
 
 handle_call({nexa,House,Channel,On},From,Ctx) ->
@@ -365,7 +367,7 @@ command(F, Args, Ctx=#ctx {sl = SL}) when SL =/= undefined ->
 	error:Reason ->
 	    {reply, {error,Reason}, Ctx}
     end;
-command(F, Args, Ctx) ->
+command(_F, _Args, Ctx) ->
     error_logger:info_msg("~p: No port defined yet.\n", [?MODULE]),
     {reply, {error,no_port}, Ctx}.
 
@@ -376,10 +378,9 @@ command(F, Args, Ctx) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec handle_cast(Msg::term(), Ctx::record()) -> 
-			 {noreply, Ctx::record()} |
-			 {noreply, Ctx::record(), Timeout::timeout()} |
-			 {stop, Reason::term(), Ctx::record()}.
+-spec handle_cast(Msg::term(), Ctx::#ctx{}) -> 
+			 {noreply, Ctx::#ctx{}} |
+			 {stop, Reason::term(), Ctx::#ctx{}}.
 
 handle_cast(_Msg, Ctx) ->
     ?dbg(?SERVER,"handle_cast: Unknown message ~p", [_Msg]),
@@ -392,10 +393,14 @@ handle_cast(_Msg, Ctx) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec handle_info(Info::retry, Ctx::record()) -> 
-			 {noreply, Ctx::record()} |
-			 {noreply, Ctx::record(), Timeout::timeout()} |
-			 {stop, Reason::term(), Ctx::record()}.
+-type info()::
+	retry |
+	{Port::term(), {data, Data::binary()}} |
+	term() .
+
+-spec handle_info(Info::info(), Ctx::#ctx{}) -> 
+			 {noreply, Ctx::#ctx{}} |
+			 {stop, Reason::term(), Ctx::#ctx{}}.
 
 handle_info(retry, S) ->
     ?dbg(?SERVER,"handle_info: retry open port", []),
@@ -432,7 +437,7 @@ handle_info(_Info, Ctx) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec terminate(Reason::term(), Ctx::record()) -> 
+-spec terminate(Reason::term(), Ctx::#ctx{}) -> 
 		       ok.
 
 terminate(_Reason, _Ctx) ->
@@ -445,8 +450,8 @@ terminate(_Reason, _Ctx) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec code_change(OldVsn::term(), Ctx::record(), Extra::term()) -> 
-			 {ok, NewCtx::record()}.
+-spec code_change(OldVsn::term(), Ctx::#ctx{}, Extra::term()) -> 
+			 {ok, NewCtx::#ctx{}}.
 
 code_change(_OldVsn, Ctx, _Extra) ->
     {ok, Ctx}.

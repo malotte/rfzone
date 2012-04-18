@@ -4,8 +4,8 @@
 %% @hidden
 -module(tellstick_node).
 
--export([init/0, start/0, stop/0]).
--export([serial/0, serial_os_env/0]).
+%% Note: This directive should only be used in test suites.
+-compile(export_all).
 
 -define(SEAZONE, 16#2A1).
 
@@ -64,3 +64,10 @@ stop() ->
     co_api:stop(Serial),
     co_proc:stop(),
     can_router:stop().
+
+start_tellstick() ->
+    tellstick_srv:start_link([{debug, true},
+			      {co_node, serial()}, 
+			      {simulated, true}]).
+   
+
