@@ -675,8 +675,8 @@ reverse_bits_(Bits, I, RBits) ->
     reverse_bits_(Bits bsr 1, I-1, (RBits bsl 1) bor (Bits band 1)).
 
 
-send_command(simulated, Data) ->
-    ?dbg(?SERVER,"send_command: Sending data =~p\n", [Data]),
+send_command(simulated, _Data) ->
+    ?dbg(?SERVER,"send_command: Sending data =~p\n", [_Data]),
     ok;
 send_command(SL, Data) ->
     Data1 = ascii_data(Data),
