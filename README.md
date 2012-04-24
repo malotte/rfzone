@@ -51,6 +51,18 @@ This id should then be included in the tellstick configuration file described be
 
 In the SeaZone app you must define devices corresponding to the real devices you want to control. Devices can be grouped and also added to panels to get a better overview. The device channel given to a device must correspond to the remote channel configured in tellstick.conf.
 
+tellstick has support for the following remote control protocols:
+<ul>
+<li>nexa</li>
+<li>nexax</li>
+<li>waveman</li>
+<li>sartano</li>
+<li>ikea</li>
+<li>risingsun</li>
+</ul>
+
+ 
+
 #### Files
 
 Arguments to all applicable erlang applications are specified in an erlang configuration file.<br/>

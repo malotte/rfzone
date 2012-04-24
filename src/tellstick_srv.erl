@@ -446,11 +446,11 @@ load_conf([C | Cs], Conf, Items) ->
 	    {error, {unknown_config, C}}
     end;
 load_conf([], Conf, Items) ->
-    Dbg = get(dbg),
-    if Dbg ->
+    case get(dbg) of
+	true ->
 	    error_logger:info_msg("Loaded configuration: \n ",[]),
 	    lists:foreach(fun(Item) -> print_item(Item) end, Items);
-       true ->
+	_Other ->
 	    do_nothing
     end,
     if Conf#conf.product =:= undefined ->
@@ -485,7 +485,7 @@ reset_items(Items) ->
       fun(I) ->
 	      ?dbg(?SERVER,"reset_items: resetting ~p, ~.16#, ~.16#", 
 		   [I#item.type,I#item.unit,I#item.chan]),
- 	      call(I#item.type,[I#item.unit,I#item.chan,false])
+ 	      call(I#item.type,[I#item.unit,I#item.chan,false,[]])
       end,
       Items).
 
@@ -505,7 +505,6 @@ handle_notify({RemoteId, Index, SubInd, Value}, Ctx) ->
     case take_item(RemoteId, SubInd, Ctx#ctx.items) of
 	false ->
 	    ?dbg(?SERVER,"take_item = false", []),
-	    lists:foreach(fun(Item) -> print_item(Item) end, Ctx#ctx.items),
 	    {noreply,Ctx};
 	{value,I,Is} ->
 	    case Index of
@@ -513,7 +512,7 @@ handle_notify({RemoteId, Index, SubInd, Value}, Ctx) ->
 		    Items = digital_input(Ctx#ctx.node_id,I,Is,Value),
 		    {noreply, Ctx#ctx { items=Items }};
 		?MSG_ANALOG ->
-		    Items = analog_input(Ctx#ctx.node_id,I,Is,Value),
+		    Items = analog_input(Ctx#ctx.node_id,I,Is,Value,false),
 		    {noreply, Ctx#ctx { items=Items }};
 		?MSG_ENCODER ->
 		    Items = encoder_input(Ctx#ctx.node_id,I,Is,Value),
@@ -555,15 +554,30 @@ remote_power_on(_Rid, _Nid, []) ->
 digital_input(Nid, I, Is, Value) ->
     Digital    = proplists:get_bool(digital, I#item.flags),
     SpringBack = proplists:get_bool(springback, I#item.flags),
+    Analog     = proplists:get_bool(analog, I#item.flags),
     if Digital, SpringBack, Value =:= 1 ->
 	    Active = not I#item.active,
 	    digital_input_call(Nid, I, Is, Active);
-       Digital, not SpringBack ->
+       Digital, not Analog, not SpringBack ->
 	    Active = Value =:= 1,
 	    digital_input_call(Nid, I, Is, Active);
+       Digital, Analog, Value == 0, I#item.active ->
+	    ?dbg(?SERVER,"digital_input: deactivating analog.", []),
+	    analog_input(Nid, I, Is, Value, true);
+       Digital, Analog, Value == 1, not I#item.active, I#item.level =/= 0 ->
+	    ?dbg(?SERVER,"digital_input: activating analog with old level ~p.", 
+		 [I#item.level]),
+	    analog_input(Nid, I, Is, I#item.level, true);
+       Digital, Analog, Value == 1, not I#item.active, I#item.level == 0 ->
+	    ?dbg(?SERVER,"digital_input: activating analog with medium value ~p.", 
+		 [65535/2]),
+	    analog_input(Nid, I, Is, 65535/2, true); %% Medium ??
        Digital ->
 	    ?dbg(?SERVER,"digital_input: No action.", []),
-	    print_item(I),
+	    case get(dbg) of
+		true -> print_item(I);
+		_Other -> do_nothing
+	    end,
 	    [I | Is];
        true ->
 	    ?dbg(?SERVER,"Not digital device.", []),
@@ -572,8 +586,11 @@ digital_input(Nid, I, Is, Value) ->
 
 digital_input_call(Nid, I, Is, Active) -> 
     ?dbg(?SERVER,"digital_input: calling driver.",[]),
-    print_item(I),
-    case call(I#item.type,[I#item.unit,I#item.chan,Active]) of
+    case get(dbg) of
+	true -> print_item(I);
+	_Other -> do_nothing
+    end,
+    case call(I#item.type,[I#item.unit,I#item.chan,Active,[]]) of
 	ok ->
 	    AValue = if Active -> 1; true -> 0 end,
 	    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.lchan, AValue),
@@ -582,21 +599,43 @@ digital_input_call(Nid, I, Is, Active) ->
 	    [I | Is]
     end.
 
-analog_input(Nid, I, Is, Value) ->
+analog_input(Nid, I, Is, Value, FromDigital) ->
     Analog = proplists:get_bool(analog, I#item.flags),
+    Digital= proplists:get_bool(digital, I#item.flags),
     Min    = proplists:get_value(analog_min, I#item.flags, 0),
     Max    = proplists:get_value(analog_max, I#item.flags, 255),
+    Style  = proplists:get_value(style, I#item.flags, smooth),
     if Analog ->
+	    %% Calculate actual level
 	    %% Scale 0-65535 => Min-Max
 	    IValue = trunc(Min + (Max-Min)*(Value/65535)),
 	    %% scale Min-Max => 0-65535 (adjusting the slider)
 	    RValue = trunc(65535*((IValue-Min)/(Max-Min))),
 	    ?dbg(?SERVER,"analog_input: calling driver.",[]),
-	    print_item(I),
-	    case call(I#item.type,[I#item.unit,I#item.chan,IValue]) of
+	    case get(dbg) of
+		true -> print_item(I);
+		_Other -> do_nothing
+	    end,
+	    case call(I#item.type,[I#item.unit,I#item.chan,IValue,[{style, Style}]]) of
 		ok ->
+		    %% For devices without digital connection output_active
+		    %% is sent when level is changed from/to 0
+		    if not I#item.active andalso 
+		       RValue =/= 0 andalso 
+		       (not Digital orelse FromDigital) -> 
+			    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.lchan, 1);
+		       I#item.active andalso 
+		       RValue == 0 andalso 
+		       (not Digital orelse FromDigital) -> 
+			    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.lchan, 0);
+		       true ->
+			    do_nothing
+		    end,
+		    %% Inform client of actual level
 		    notify(Nid, pdo1_tx, ?MSG_ANALOG, I#item.lchan, RValue),
-		    [I#item { level=RValue} | Is];
+		    [I#item {level=RValue, 
+			     active = ((RValue =/= 0) andalso 
+				       (not Digital orelse FromDigital))} | Is];
 		_Error ->
 		    [I | Is]
 	    end;

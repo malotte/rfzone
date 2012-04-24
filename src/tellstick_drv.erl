@@ -26,12 +26,12 @@
 	 code_change/3]).
 
 %% Remote control protocols
--export([nexa/3, 
-	 nexax/3, 
-	 waveman/3, 
-	 sartano/2, 
+-export([nexa/4, 
+	 nexax/4, 
+	 waveman/4, 
+	 sartano/4, 
 	 ikea/4, 
-	 risingsun/3]).
+	 risingsun/4]).
 
 %% Aplied functions
 -export([nexa_command/3, 
@@ -119,10 +119,11 @@ stop() ->
 %%--------------------------------------------------------------------
 -spec nexa(House::integer(), 
 	   Channel::integer(), 
-	   On::boolean() | bell) -> 
+	   On::boolean() | bell,
+	   []) -> 
 		  ok | {error, Error::term()}.
 
-nexa(House,Channel,On) when
+nexa(House,Channel,On,[]) when
       House >= $A, House =< $P,
       Channel >= 1, Channel =< 16, (is_boolean(On) orelse On=:=bell) ->
     gen_server:call(?SERVER, {nexa,House,Channel,On}).
@@ -138,10 +139,11 @@ nexa(House,Channel,On) when
 %%--------------------------------------------------------------------
 -spec nexax(Serial::integer(), 
 	    Channel::integer(), 
-	    Level::boolean() | bell | integer()) -> 
+	    Level::boolean() | bell | integer(),
+	    list(term())) -> 
 		   ok | {error, Error::term()}.
 
-nexax(Serial,Channel,Level) when
+nexax(Serial,Channel,Level,_Flags) when
       Serial >= 0, Serial =< 16#3ffffff,
       Channel >= 1, Channel =< 16, 
       (is_boolean(Level) orelse (Level =:= bell) 
@@ -159,10 +161,11 @@ nexax(Serial,Channel,Level) when
 %%--------------------------------------------------------------------
 -spec waveman(House::integer(), 
 	      Channel::integer(), 
-	      On::boolean()) -> 
+	      On::boolean(),
+	      []) -> 
 		     ok | {error, Error::term()}.
 
-waveman(House,Channel,On) when
+waveman(House,Channel,On,[]) when
       House >= $A, House =< $P,
       Channel >= 1, Channel =< 16, is_boolean(On) ->
     gen_server:call(?SERVER, {waveman,House,Channel,On}).    
@@ -174,11 +177,13 @@ waveman(House,Channel,On) when
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec sartano(Channel::integer(), 
-	      On::boolean()) -> 
+-spec sartano(Dummy::term(),
+	      Channel::integer(), 
+	      On::boolean(),
+	      []) -> 
 		     ok | {error, Error::term()}.
 
-sartano(Channel,On) when
+sartano(_Dummy,Channel,On,[]) when
     Channel >= 0, Channel =< 16#3FF, is_boolean(On) ->
     gen_server:call(?SERVER, {sartano,Channel,On}).
     
@@ -188,21 +193,27 @@ sartano(Channel,On) when
 %% Serial should be in the range [1 - 16]. <br/>
 %% Channel should be in the range [1 - 10]. <br/>
 %% Level should be in the range [1 - 10]. <br/>
+%% Flags should be [{style, smooth | instant}]. <br/>
 %%
 %% @end
 %%--------------------------------------------------------------------
 -spec ikea(System::integer(), 
 	   Channel::integer(), 
 	   Level::integer(), 
-	   Style:: 0 | 1) -> 
+	   Flags::list({style, Style:: 0|1})) -> 
 		  ok | {error, Error::term()}.
 
-ikea(System,Channel,Level,Style) when
+ikea(System,Channel,Level,Flags) when
       System >= 1, System =< 16,
       Channel >= 1, Channel =< 10,
       Level >= 0, Level =< 10,
-      Style >= 0, Style =< 1 ->
-    gen_server:call(?SERVER, {ikea,System,Channel,Level,Style}).
+      is_list(Flags) ->
+    DimStyle = 
+	case proplists:get_value(style, Flags, smooth) of
+	    smooth -> 1;
+	    instant -> 0
+	end,
+    gen_server:call(?SERVER, {ikea,System,Channel,Level,DimStyle}).
     
 %%--------------------------------------------------------------------
 %% @doc
@@ -214,10 +225,11 @@ ikea(System,Channel,Level,Style) when
 %%--------------------------------------------------------------------
 -spec risingsun(Code::integer(), 
 		Unit::integer(), 
-		On::boolean()) -> 
+		On::boolean(),
+		[]) -> 
 		       ok | {error, Error::term()}.
 
-risingsun(Code,Unit,On) when
+risingsun(Code,Unit,On,[]) when
       Code >= 1, Code =< 4, Unit >= 1, Unit =< 4, is_boolean(On) ->    
     gen_server:call(?SERVER, {risingsun,Code,Unit,On}).
 
@@ -245,8 +257,8 @@ debug(TrueOrFalse) when is_boolean(TrueOrFalse) ->
 %%% gen_server callbacks
 %%%===================================================================
 
-%%--------------------------------------------------------------------
 %% @private
+%%--------------------------------------------------------------------
 %% @doc
 %% Initializes the server
 %%
@@ -360,6 +372,8 @@ command(F, Args, Ctx=#ctx {sl = SL}) when SL =/= undefined ->
 		ok ->
 		    %% Wait for confirmation
 		    {noreply,Ctx#ctx {command = Command}};
+		{simulated, ok} ->
+		    {reply, ok, Ctx};
 		Other ->
 		    {reply, Other, Ctx}
 	    end
@@ -475,12 +489,15 @@ code_change(_OldVsn, Ctx, _Extra) ->
 -define(NEXA_OFF,    16#600).
 -define(WAVEMAN_OFF, 16#000).
 
+%% @private
 waveman_command(HouseCode, Channel, On) ->
     nexa_command(HouseCode, Channel, On, true).
 
+%% @private
 nexa_command(HouseCode, Channel, On) ->
     nexa_command(HouseCode, Channel, On, false).
 
+%% @private
 nexa_command(HouseCode, Channel, On, WaveMan) when
       HouseCode >= $A, HouseCode =< $P,
       Channel >= 1, Channel =< 16, (is_boolean(On) orelse On =:= bell) ->
@@ -520,6 +537,7 @@ nexa_rf_code(Code, N) ->
 %%  1  == "00" => 10101010 = [240,240,240,240]
 %%  "11" => not used
 
+%% @private
 nexax_command(Serial, Channel, Level) when
       Serial >= 0, Serial =< 16#3ffffff,
       Channel >= 1, Channel =< 16, 
@@ -559,6 +577,7 @@ nexax_rf_code(Code, N) ->
 -define(SARTANO_X, []).
 -define(SARTANO_S, [360,1070]).  %% $k
 
+%% @private
 sartano_command(Channel, On) when
       Channel >= 1, Channel =< 10, is_boolean(On) ->
     sartano_multi_command((1 bsl (Channel-1)), On).
@@ -587,11 +606,12 @@ sartano_rf_code(Code, N) ->
 %% DimStyle: 0  Instant
 %%         : 1  Smooth
 %%
+%% @private
 ikea_command(System, Channel, DimLevel, DimStyle) when 
-      System >= 1, System =< 16,
-      Channel >= 1, Channel =< 10,
-      DimLevel >= 0, DimLevel =< 10,
-      DimStyle >= 0, DimStyle =< 1 ->
+      System >= 1, System =< 16 andalso
+      Channel >= 1, Channel =< 10 andalso
+      DimLevel >= 0, DimLevel =< 10 andalso
+      (DimStyle == 0 orelse DimStyle == 1) ->
     ChannelCode = Channel rem 10,
     IntCode0 = (1 bsl (ChannelCode+4)) bor reverse_bits(System-1,4),
     IntFade = (DimStyle*2 + 1) bsl 4,   %% 1 or 3 bsl 4
@@ -626,6 +646,7 @@ checksum_bits(Bits, I, CSum) ->
 %% I guess that rising sun can send bit patterns on both code and unit
 %% This is coded for one code/unit only
 %%
+%% @private
 risingsun_command(Code, Unit, On) when
       Code >= 1, Code =< 4, Unit >= 1, Unit =< 4, is_boolean(On) ->
     risingsun_multi_command((1 bsl (Code-1)), (1 bsl (Unit-1)), On).
@@ -677,7 +698,7 @@ reverse_bits_(Bits, I, RBits) ->
 
 send_command(simulated, _Data) ->
     ?dbg(?SERVER,"send_command: Sending data =~p\n", [_Data]),
-    ok;
+    {simulated, ok};
 send_command(SL, Data) ->
     Data1 = ascii_data(Data),
     N = length(Data1),
