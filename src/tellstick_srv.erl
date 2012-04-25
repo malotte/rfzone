@@ -437,7 +437,13 @@ load_conf([C | Cs], Conf, Items) ->
 			   type=Type, unit=Unit, 
 			   chan=Chan, flags=Flags,
 			   active=false, level=0 },
-	    load_conf(Cs, Conf, [Item | Items]);
+	    case verify_item(Item) of
+		ok ->
+		    load_conf(Cs, Conf, [Item | Items]);
+		nok ->
+		    error_logger:error_msg("Inconsistent item ~p, could not be loaded\n", [Item]),
+		    load_conf(Cs, Conf, Items)
+	    end;
 	{product,Product1} ->
 	    load_conf(Cs, Conf#conf { product=Product1}, Items);
 	{device,Name} ->
@@ -459,6 +465,117 @@ load_conf([], Conf, Items) ->
 	    {ok, Conf#conf {items=Items}}
     end.
     
+verify_item(_Item=#item {type = Type, unit = Unit, chan = Channel, flags = Flags}) ->
+    case verify_unit_range(Type, Unit) of
+	ok ->
+	    case verify_channel_range(Type, Channel) of
+		ok ->
+		    verify_flags(Type, Flags);
+		nok ->
+		    nok
+	    end;
+	nok ->
+	    nok
+    end.
+
+verify_unit_range(nexa, Unit) 
+  when Unit >= $A,
+       Unit =< $P ->
+    ok;
+verify_unit_range(nexax, Unit) 
+  when Unit >= 0,
+       Unit =< 16#3fffffff ->
+    ok;
+verify_unit_range(waveman, Unit) 
+  when Unit >= $A,
+       Unit =< $P ->
+    ok;
+verify_unit_range(sartano, _Unit) ->
+    ok;
+verify_unit_range(ikea, Unit) 
+  when Unit >= 1,
+       Unit =< 16 ->
+    ok;
+verify_unit_range(risingsun, Unit) 
+  when Unit >= 1,
+       Unit =< 4 ->
+    ok;
+verify_unit_range(Type, Unit) ->
+    ?dbg(?SERVER,"verify_unit_range: invalid type/unit combination ~p,~p", 
+		   [Type, Unit]),
+    nok.
+
+verify_channel_range(nexa, Channel) 
+  when Channel >= 1,
+       Channel =< 16 ->
+    ok;
+verify_channel_range(nexax, Channel) 
+  when Channel >= 1,
+       Channel =< 16 ->
+    ok;
+verify_channel_range(waveman, Channel) 
+  when Channel >= 1,
+       Channel =< 16 ->
+    ok;
+verify_channel_range(sartano, Channel)
+  when Channel >= 1,
+       Channel =< 16#3ff ->
+   ok;
+verify_channel_range(ikea, Channel)
+  when Channel >= 1,
+       Channel =< 10 ->
+    ok;
+verify_channel_range(risingsun, Channel)
+  when Channel >= 1,
+       Channel =< 4 ->
+    ok;
+verify_channel_range(Type, Channel) ->
+    ?dbg(?SERVER,"verify_channel_range: invalid type/channel combination ~p,~p", 
+		   [Type, Channel]),
+    nok.
+
+
+verify_flags(_Type, []) ->
+    ok;
+verify_flags(Type, [digital | Flags]) 
+  when Type == nexa;
+       Type == nexax;
+       Type == waveman;
+       Type == sartano;
+       Type == ikea;
+       Type == risingsun ->
+    verify_flags(Type, Flags);
+verify_flags(Type, [springback | Flags]) 
+  when Type == nexa;
+       Type == waveman;
+       Type == sartano;
+       Type == risingsun ->
+    verify_flags(Type, Flags);
+verify_flags(Type, [analog | Flags]) 
+  when Type == nexax;
+       Type == ikea ->
+    verify_flags(Type, Flags);
+verify_flags(ikea = Type, [{analog_min, Min} | Flags]) 
+  when Min >= 0, Min =< 10 ->
+    verify_flags(Type, Flags);
+verify_flags(ikea = Type, [{analog_max, Max} | Flags]) 
+  when Max >= 0, Max =< 10 ->
+    verify_flags(Type, Flags);
+verify_flags(ikea = Type, [{style, Style} | Flags]) 
+  when Style == smooth;
+       Style == instant ->
+    verify_flags(Type, Flags);
+verify_flags(nexax = Type, [{analog_min, Min} | Flags]) 
+  when Min >= 0, Min =< 255 ->
+    verify_flags(Type, Flags);
+verify_flags(nexax = Type, [{analog_max, Max} | Flags]) 
+  when Max >= 0, Max =< 255 ->
+    verify_flags(Type, Flags);
+verify_flags(Type, [Flag | _Flags]) ->
+    ?dbg(?SERVER,"verify_flags: invalid type/flag combination ~p,~p", 
+		   [Type, Flag]),
+    nok.
+
 
 
 translate({xcobid, Func, Nid}) ->

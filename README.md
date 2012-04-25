@@ -11,6 +11,16 @@ To use tellstick you need:
 <li>An iPhone/iPod/iPad with the Seazone RC app, available at App Store.</li>
 </ul>
 
+tellstick currently has support for the following remote control protocols:
+<ul>
+<li>nexa</li>
+<li>nexax</li>
+<li>waveman</li>
+<li>sartano</li>
+<li>ikea</li>
+<li>risingsun</li>
+</ul>
+
 ### Dependencies
 
 To build tellstick you will need a working installation of Erlang R15B (or
@@ -51,24 +61,12 @@ This id should then be included in the tellstick configuration file described be
 
 In the SeaZone app you must define devices corresponding to the real devices you want to control. Devices can be grouped and also added to panels to get a better overview. The device channel given to a device must correspond to the remote channel configured in tellstick.conf.
 
-tellstick has support for the following remote control protocols:
-<ul>
-<li>nexa</li>
-<li>nexax</li>
-<li>waveman</li>
-<li>sartano</li>
-<li>ikea</li>
-<li>risingsun</li>
-</ul>
-
- 
-
 #### Files
 
 Arguments to all applicable erlang applications are specified in an erlang configuration file.<br/>
 An example can be found in ["sys.config"](https://github.com/malotte/tellstick/raw/master/sys.config).<br/>
 
-tellstick uses a config file where the devices to control are specified, the syntax is explained in the file.<br/>
+tellstick uses a config file where the devices to control are specified, the syntax is explained in the file. A description is also available in [User's Guide - How to configure tellstick](wiki/howto_configure_tellstick).<br/>
 The device for the tellstick usb pin is also specified in this file. <br/>
 
 Default file is ["tellstick/priv/tellstick.conf"](https://github.com/malotte/tellstick/raw/master/priv/tellstick.conf).<br/>
@@ -146,5 +144,3 @@ tellstick is documented using edoc. To generate the documentation do:
 $ cd tellstick
 $ rebar doc
 ```
-
-

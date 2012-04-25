@@ -192,7 +192,7 @@ sartano(_Dummy,Channel,On,[]) when
 %% Sends a ikea protocol request to the device.<br/>
 %% Serial should be in the range [1 - 16]. <br/>
 %% Channel should be in the range [1 - 10]. <br/>
-%% Level should be in the range [1 - 10]. <br/>
+%% Level should be in the range [0 - 10]. <br/>
 %% Flags should be [{style, smooth | instant}]. <br/>
 %%
 %% @end
