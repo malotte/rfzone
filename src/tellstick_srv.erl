@@ -58,17 +58,17 @@
 	  %% Remote ID
 	  rid,    %% remote id
 	  rchan,  %% remote channel
-	  lchan,  %% local channel
 
 	  %% Device ID
 	  type,     %% nexa, ikea ...
 	  unit,     %% serial/unit/house code
-	  chan,     %% device channel
+	  devchan,  %% device channel
 	  flags=[], %% device flags
 
 	  %% State
 	  active = false,  %% off
-	  level = 0        %% dim level
+	  level = 0,       %% dim level
+	  timer            %% To filter analog input
 	}).
 
 %% Loop data
@@ -355,6 +355,7 @@ handle_cast(_Msg, Ctx) ->
 %% @end
 %%--------------------------------------------------------------------
 -type info()::
+	{analog_input, Rid::integer(), Rchan::term(), Value::integer()} |
 	{'EXIT', Pid::pid(), co_node_terminated} |
 	term().
 
@@ -363,6 +364,19 @@ handle_cast(_Msg, Ctx) ->
 			 {noreply, Ctx::#ctx{}, Timeout::timeout()} |
 			 {stop, Reason::term(), Ctx::#ctx{}}.
 
+handle_info({analog_input, Rid, Rchan, Value}, 
+	    Ctx=#ctx {node_id = Nid, items = OldItems}) ->
+    %% Buffered analog input
+    ?dbg(?SERVER,"handle_info: analog_input.",[]),
+    case take_item(Rid, Rchan, OldItems) of
+	false ->
+	    ?dbg(?SERVER,"handle_info: analog_input, item ~p, ~p not found", 
+		 [Rid, Rchan]),
+	    {noreply,Ctx};
+	{value,Item,OtherItems} ->
+	    NewItems = exec_analog_input(Item,Nid,OtherItems,Value),
+	    {noreply, Ctx#ctx { items = NewItems }}
+    end;
 handle_info({'EXIT', _Pid, co_node_terminated}, Ctx) ->
     ?dbg(?SERVER,"handle_info: co_node terminated.",[]),
     {stop, co_node_terminated, Ctx};    
@@ -442,9 +456,9 @@ load_conf([C | Cs], Conf, Items) ->
     case C of
 	{Rid,Rchan,Type,Unit,Chan,Flags} ->
 	    RCobId = translate(Rid),
-	    Item = #item { rid=RCobId, rchan=Rchan, lchan=Rchan,
+	    Item = #item { rid=RCobId, rchan=Rchan, 
 			   type=Type, unit=Unit, 
-			   chan=Chan, flags=Flags,
+			   devchan=Chan, flags=Flags,
 			   active=false, level=0 },
 	    case verify_item(Item) of
 		ok ->
@@ -474,7 +488,7 @@ load_conf([], Conf, Items) ->
 	    {ok, Conf#conf {items=Items}}
     end.
     
-verify_item(_Item=#item {type = Type, unit = Unit, chan = Channel, flags = Flags}) ->
+verify_item(_I=#item {type = Type, unit = Unit, devchan = Channel, flags = Flags}) ->
     case verify_unit_range(Type, Unit) of
 	ok ->
 	    case verify_channel_range(Type, Channel) of
@@ -602,16 +616,16 @@ power_command(Nid, Cmd, Items) ->
     lists:foreach(
       fun(I) ->
 	      Value = ((I#item.rid bsl 8) bor I#item.rchan) band 16#ffffffff, %% ??
-	      notify(Nid, pdo1_tx, Cmd, I#item.lchan, Value)
+	      notify(Nid, pdo1_tx, Cmd, I#item.rchan, Value)
       end,
       Items).
 
 reset_items(Items) ->
     lists:foreach(
       fun(I) ->
-	      ?dbg(?SERVER,"reset_items: resetting ~p, ~.16#, ~.16#", 
-		   [I#item.type,I#item.unit,I#item.chan]),
- 	      call(I#item.type,[I#item.unit,I#item.chan,false,[]])
+	      ?dbg(?SERVER,"reset_items: resetting ~p, ~p, ~p", 
+		   [I#item.type,I#item.unit,I#item.devchan]),
+ 	      call(I#item.type,[I#item.unit,I#item.devchan,false,[]])
       end,
       Items).
 
@@ -638,7 +652,7 @@ handle_notify({RemoteId, Index, SubInd, Value}, Ctx) ->
 		    Items = digital_input(Ctx#ctx.node_id,I,Is,Value),
 		    {noreply, Ctx#ctx { items=Items }};
 		?MSG_ANALOG ->
-		    Items = analog_input(Ctx#ctx.node_id,I,Is,Value),
+		    Items = analog_input(I,Is,Value),
 		    {noreply, Ctx#ctx { items=Items }};
 		?MSG_ENCODER ->
 		    Items = encoder_input(Ctx#ctx.node_id,I,Is,Value),
@@ -654,15 +668,15 @@ remote_power_off(_Rid, _Nid, _Is) ->
 
 remote_power_on(Rid, Nid, [I | Is]) when I#item.rid =:= Rid ->
     %% add channel (local chan = remote chan)
-    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ADD, I#item.lchan,
+    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ADD, I#item.rchan,
 	   ((Rid bsl 8) bor I#item.rchan) band 16#fffffff),
     %% update status
     AValue = if I#item.active -> 1; true -> 0 end,
-    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.lchan, AValue),
+    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.rchan, AValue),
     %% if dimmer then send level
     Analog = proplists:get_bool(analog, I#item.flags),
     if Analog ->
-	    notify(Nid, pdo1_tx, ?MSG_ANALOG, I#item.lchan, I#item.level);
+	    notify(Nid, pdo1_tx, ?MSG_ANALOG, I#item.rchan, I#item.level);
        true ->
 	    ok
     end,
@@ -704,64 +718,76 @@ digital_input_call(Nid, I, Is, Active) ->
 	true -> print_item(I);
 	_Other -> do_nothing
     end,
-    case call(I#item.type,[I#item.unit,I#item.chan,Active,[]]) of
+    case call(I#item.type,[I#item.unit,I#item.devchan,Active,[]]) of
 	ok ->
 	    AValue = if Active -> 1; true -> 0 end,
-	    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.lchan, AValue),
+	    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.rchan, AValue),
 	    [I#item { active=Active} | Is];
 	_Error ->
 	    [I | Is]
     end.
 
-analog_input(Nid, I, Is, Value) ->
-    Analog = proplists:get_bool(analog, I#item.flags),
-    Digital= proplists:get_bool(digital, I#item.flags),
-    Min    = proplists:get_value(analog_min, I#item.flags, 0),
-    Max    = proplists:get_value(analog_max, I#item.flags, 255),
-    Style  = proplists:get_value(style, I#item.flags, smooth),
+analog_input(I=#item {rid = Rid, rchan = Rchan, timer = Timer, flags = Flags}, 
+	     Is, Value) ->
+    Analog = proplists:get_bool(analog, Flags),
     if Analog ->
-	    %% Calculate actual level
-	    %% Scale 0-65535 => Min-Max
-	    IValue = trunc(Min + (Max-Min)*(Value/65535)),
-	    %% scale Min-Max => 0-65535 (adjusting the slider)
-	    RValue = trunc(65535*((IValue-Min)/(Max-Min))),
-	    ?dbg(?SERVER,"analog_input: calling driver.",[]),
-	    case get(dbg) of
-		true -> print_item(I);
-		_Other -> do_nothing
+	    if Timer =/= undefined ->
+		    timer:cancel(Timer);
+	       true ->
+		    do_nothing
 	    end,
-	    case call(I#item.type,[I#item.unit,I#item.chan,IValue,[{style, Style}]]) of
-		ok ->
-		    %% For devices without digital connection output_active
-		    %% is sent when level is changed from/to 0
-		    if not I#item.active andalso 
-		       RValue =/= 0 andalso 
-		       not Digital -> 
-			    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.lchan, 1);
-		       I#item.active andalso 
-		       RValue == 0 andalso 
-		       not Digital -> 
-			    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.lchan, 0);
-		       not I#item.active andalso 
-		       RValue =/= 0 -> 
-			    do_nothing;
-		       I#item.active andalso 
-		       RValue == 0 ->
-			    do_nothing;
-		       true ->
-			    %% Inform client of actual level
-			    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.lchan, RValue)
-		    end,
-		    [I#item {level=RValue, 
-			     active = ((RValue =/= 0) andalso 
-				       not Digital)} | Is];
-		_Error ->
-		    [I | Is]
-	    end;
+	    ?dbg(?SERVER,"analog_input: buffer call for ~p, ~p, ~p.",
+		 [Rid, Rchan, Value]),
+	    {ok, Tref} = 
+		timer:send_after(100, {analog_input, Rid, Rchan, Value}),
+	    [I#item {timer = Tref} | Is];
        true ->
+	    ?dbg(?SERVER,"analog_input: not analog device ~p, ~p, ignored.",
+		 [Rid, Rchan]),
 	    [I | Is]
     end.
 
+exec_analog_input(I=#item {type = Type, rchan = Rchan, flags = Flags, 
+			   unit = Unit, devchan = Dchan, active = Active}, 
+		  Nid, Is, Value) ->
+    Digital = proplists:get_bool(digital, Flags),
+    Min     = proplists:get_value(analog_min, Flags, 0),
+    Max     = proplists:get_value(analog_max, Flags, 255),
+    Style   = proplists:get_value(style, Flags, smooth),
+    %% Calculate actual level
+    %% Scale 0-65535 => Min-Max
+    IValue = trunc(Min + (Max-Min)*(Value/65535)),
+    %% scale Min-Max => 0-65535 (adjusting the slider)
+    RValue = trunc(65535*((IValue-Min)/(Max-Min))),
+    ?dbg(?SERVER,"analog_input: changing item:.",[]),
+    case get(dbg) of
+	true -> print_item(I);
+	_Other -> do_nothing
+    end,
+
+    ?dbg(?SERVER,"analog_input: calling driver with new value ~p",[IValue]),
+    case call(Type,[Unit,Dchan,IValue,[{style, Style}]]) of
+	ok ->
+	    %% Inform client of actual level
+	    NewI = 
+		case {Digital,RValue == 0,Active} of 
+		    {true, true, true} ->
+			%% Not turned off!
+			notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE,Rchan, RValue+1),
+			I#item {level=RValue, timer = undefined};
+		    {true, false, false} ->
+			%% Not turned on! How handle ???
+			notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE,Rchan, 0),
+			I#item {level=RValue, timer = undefined};
+		    _Any ->
+			notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE,Rchan, RValue),
+			I#item {level=RValue, timer = undefined, 
+				active = (RValue =/= 0)} 
+		   end,
+	    [NewI | Is];
+	_Error ->
+	    [I | Is]
+    end.
 
 notify(Nid, Func, Ix, Si, Value) ->
     co_api:notify_from(Nid, Func, Ix, Si,co_codec:encode(Value, unsigned32)).
@@ -789,9 +815,11 @@ call(Type, Args) ->
     
     
 print_item(Item) ->
-    io:format("Item = {Rid = ~.16#, Rchan = ~p, Lchan ~p, Type = ~p, Unit = ~p, Chan = ~p, Active = ~p, Level = ~p, Flags = ",
-	      [Item#item.rid, Item#item.rchan, Item#item.lchan, Item#item.type,
-	       Item#item.unit, Item#item.chan, Item#item.active, Item#item.level]),
+    io:format("Item = {Rid = ~.16#, Rchan = ~p, Type = ~p, Unit = ~p, Chan = ~p, "
+	      "Active = ~p, Level = ~p, Flags = ",
+	      [Item#item.rid, Item#item.rchan, 
+	       Item#item.type,Item #item.unit, Item#item.devchan, 
+	       Item#item.active, Item#item.level]),
     print_flags(Item#item.flags).
 
 print_flags([]) ->
