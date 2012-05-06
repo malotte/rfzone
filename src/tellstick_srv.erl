@@ -77,6 +77,7 @@
 	  co_node, %% any identity of co_node i.e. serial | name | nodeid ...
 	  node_id, %% nodeid | xnodeid of co_node, needed in notify
 	           %% should maybe be fetched when needed instead of stored in loop data ??
+	  device,  %% device used
 	  items    %% controlled items
 	}).
 
@@ -180,30 +181,13 @@ init(Args) ->
 	    ?dbg(?SERVER,"init: No CANOpen node given.", []),
 	    {stop, no_co_node};
 	CoNode ->
-	    Simulated = proplists:get_value(simulated, Args, false),
 	    FileName = proplists:get_value(config, Args, "tellstick.conf"),
 	    ConfFile =  full_filename(FileName),
 	    ?dbg(?SERVER,"init: File = ~p", [ConfFile]),
 
 	    case load_config(ConfFile) of
 		{ok, Conf} ->
-		    if Simulated ->
-			    ?dbg(?SERVER,"init: Executing in simulated mode.",[]), 
-			    {ok, _Pid} = tellstick_drv:start_link([{device,simulated},
-							      {debug, get(dbg)}]);
-		       Conf#conf.device =:= undefined ->
-			    ?dbg(?SERVER,"init: Driver undefined.", []),
-			    %% How handle ??
-			    {ok, _Pid} = tellstick_drv:start_link([{device,simulated},
-							      {debug, get(dbg)}]);
-		       true ->
-			    Device = Conf#conf.device,
-			    TOut = proplists:get_value(retry_timeout, Args, 1000),
-			    ?dbg(?SERVER,"init: Device = ~p.", [Device]),
-			    {ok, _Pid} = tellstick_drv:start_link([{device,Device},
-								   {retry_timeout, TOut},
-								   {debug, get(dbg)}])
-		    end,
+		    Device = start_device(Args, Conf),
 		    {ok, _Dict} = co_api:attach(CoNode),
 		    Nid = co_api:get_option(CoNode, id),
 		    subscribe(CoNode),
@@ -214,6 +198,7 @@ init(Args) ->
 		    power_on(Nid, Conf#conf.items),
 		    process_flag(trap_exit, true),
 		    {ok, #ctx { co_node = CoNode, 
+				device = Device,
 				node_id = Nid, 
 				items=Conf#conf.items }};
 		Error ->
@@ -222,6 +207,29 @@ init(Args) ->
 			 [ConfFile]),
 		    {stop, Error}
 	    end
+    end.
+
+start_device(Args, Conf) ->
+    Simulated = proplists:get_value(simulated, Args, false),
+    if Simulated ->
+	    ?dbg(?SERVER,"init: Executing in simulated mode.",[]), 
+	    {ok, _Pid} = tellstick_drv:start_link([{device,simulated},
+						   {debug, get(dbg)}]),
+	    simulated;
+       Conf#conf.device =:= undefined ->
+	    ?dbg(?SERVER,"init: Driver undefined.", []),
+	    %% How handle ??
+	    {ok, _Pid} = tellstick_drv:start_link([{device,simulated},
+						   {debug, get(dbg)}]),
+	    simulated;
+       true ->
+	    Device = Conf#conf.device,
+	    TOut = proplists:get_value(retry_timeout, Args, 1000),
+	    ?dbg(?SERVER,"init: Device = ~p.", [Device]),
+	    {ok, _Pid} = tellstick_drv:start_link([{device,Device},
+						   {retry_timeout, TOut},
+						   {debug, get(dbg)}]),
+	    Device
     end.
 
 %%--------------------------------------------------------------------
@@ -280,8 +288,9 @@ handle_call({new_co_node, NewCoNode}, _From, Ctx=#ctx {co_node = OldCoNode}) ->
     {reply, ok, Ctx#ctx {co_node = NewCoNode, node_id = Nid }};
 
 handle_call(dump, _From, 
-	    Ctx=#ctx {co_node = CoNode, node_id = {Type,Nid}, items = Items}) ->
-    io:format("Ctx: CoNode = ~p, ", [CoNode]),
+	    Ctx=#ctx {co_node = CoNode, device = Device, 
+		      node_id = {Type,Nid}, items = Items}) ->
+    io:format("Ctx: CoNode = ~p, Device = ~p,", [CoNode, Device]),
     io:format("NodeId = {~p, ~.16#}, Items=\n", [Type, Nid]),
     lists:foreach(fun(Item) -> print_item(Item) end, Items),
     {reply, ok, Ctx};
@@ -629,7 +638,7 @@ handle_notify({RemoteId, Index, SubInd, Value}, Ctx) ->
 		    Items = digital_input(Ctx#ctx.node_id,I,Is,Value),
 		    {noreply, Ctx#ctx { items=Items }};
 		?MSG_ANALOG ->
-		    Items = analog_input(Ctx#ctx.node_id,I,Is,Value,false),
+		    Items = analog_input(Ctx#ctx.node_id,I,Is,Value),
 		    {noreply, Ctx#ctx { items=Items }};
 		?MSG_ENCODER ->
 		    Items = encoder_input(Ctx#ctx.node_id,I,Is,Value),
@@ -671,24 +680,12 @@ remote_power_on(_Rid, _Nid, []) ->
 digital_input(Nid, I, Is, Value) ->
     Digital    = proplists:get_bool(digital, I#item.flags),
     SpringBack = proplists:get_bool(springback, I#item.flags),
-    Analog     = proplists:get_bool(analog, I#item.flags),
     if Digital, SpringBack, Value =:= 1 ->
 	    Active = not I#item.active,
 	    digital_input_call(Nid, I, Is, Active);
-       Digital, not Analog, not SpringBack ->
+       Digital, not SpringBack ->
 	    Active = Value =:= 1,
 	    digital_input_call(Nid, I, Is, Active);
-       Digital, Analog, Value == 0, I#item.active ->
-	    ?dbg(?SERVER,"digital_input: deactivating analog.", []),
-	    analog_input(Nid, I, Is, Value, true);
-       Digital, Analog, Value == 1, not I#item.active, I#item.level =/= 0 ->
-	    ?dbg(?SERVER,"digital_input: activating analog with old level ~p.", 
-		 [I#item.level]),
-	    analog_input(Nid, I, Is, I#item.level, true);
-       Digital, Analog, Value == 1, not I#item.active, I#item.level == 0 ->
-	    ?dbg(?SERVER,"digital_input: activating analog with medium value ~p.", 
-		 [65535/2]),
-	    analog_input(Nid, I, Is, 65535/2, true); %% Medium ??
        Digital ->
 	    ?dbg(?SERVER,"digital_input: No action.", []),
 	    case get(dbg) of
@@ -716,7 +713,7 @@ digital_input_call(Nid, I, Is, Active) ->
 	    [I | Is]
     end.
 
-analog_input(Nid, I, Is, Value, FromDigital) ->
+analog_input(Nid, I, Is, Value) ->
     Analog = proplists:get_bool(analog, I#item.flags),
     Digital= proplists:get_bool(digital, I#item.flags),
     Min    = proplists:get_value(analog_min, I#item.flags, 0),
@@ -739,20 +736,25 @@ analog_input(Nid, I, Is, Value, FromDigital) ->
 		    %% is sent when level is changed from/to 0
 		    if not I#item.active andalso 
 		       RValue =/= 0 andalso 
-		       (not Digital orelse FromDigital) -> 
+		       not Digital -> 
 			    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.lchan, 1);
 		       I#item.active andalso 
 		       RValue == 0 andalso 
-		       (not Digital orelse FromDigital) -> 
+		       not Digital -> 
 			    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.lchan, 0);
+		       not I#item.active andalso 
+		       RValue =/= 0 -> 
+			    do_nothing;
+		       I#item.active andalso 
+		       RValue == 0 ->
+			    do_nothing;
 		       true ->
-			    do_nothing
+			    %% Inform client of actual level
+			    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.lchan, RValue)
 		    end,
-		    %% Inform client of actual level
-		    notify(Nid, pdo1_tx, ?MSG_ANALOG, I#item.lchan, RValue),
 		    [I#item {level=RValue, 
 			     active = ((RValue =/= 0) andalso 
-				       (not Digital orelse FromDigital))} | Is];
+				       not Digital)} | Is];
 		_Error ->
 		    [I | Is]
 	    end;
@@ -762,7 +764,7 @@ analog_input(Nid, I, Is, Value, FromDigital) ->
 
 
 notify(Nid, Func, Ix, Si, Value) ->
-    co_api:notify(Nid, Func, Ix, Si,co_codec:encode(Value, unsigned32)).
+    co_api:notify_from(Nid, Func, Ix, Si,co_codec:encode(Value, unsigned32)).
     
 encoder_input(_Nid, I, Is, _Value) ->
     ?dbg(?SERVER,"encoder_input: Not implemented yet.",[]),

@@ -34,7 +34,7 @@ init() ->
     Serial = serial(),
     File = filename:join(code:priv_dir(canopen), "default.dict"),
     can_router:start(),
-    can_udp:start(0),
+    can_udp:start(tellstick_test, 0),
     {ok, _PPid} = co_proc:start_link([{linked, false}]),
     {ok, _NPid} = co_api:start_link(Serial, 
 				    [{linked, false},
@@ -50,24 +50,29 @@ init() ->
 start() ->
     Serial = serial(),
     can_router:start(),
-    can_udp:start(0),
+    can_udp:start(tellstick_test, 0),
     {ok, _PPid} = co_proc:start_link([{linked, false}]),
     {ok, _NPid} = co_api:start_link(Serial, 
 				     [{linked, false},
 				      {use_serial_as_xnodeid, true},
 				      {max_blksize, 7},
 				      {vendor,?SEAZONE},
-				      {debug, true}]).
+				      {debug, true}]),
+    co_api:state(Serial, operational).
 
 stop() ->
     Serial = serial(),
     co_api:stop(Serial),
     co_proc:stop(),
+    can_udp:stop(tellstick_test),
     can_router:stop().
 
 start_tellstick() ->
     tellstick_srv:start_link([{debug, true},
-			      {co_node, serial()}, 
-			      {simulated, true}]).
+			      {config, "/Users/malotte/erlang/tellstick/test/tellstick_SUITE_data/tellstick.conf"},
+%%			      {simulated, true},
+			      {co_node, serial()}]).
    
 
+stop_tellstick() ->
+    tellstick_srv:stop().
