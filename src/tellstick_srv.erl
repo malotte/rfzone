@@ -58,17 +58,17 @@
 	  %% Remote ID
 	  rid,    %% remote id
 	  rchan,  %% remote channel
-	  lchan,  %% local channel
 
 	  %% Device ID
 	  type,     %% nexa, ikea ...
 	  unit,     %% serial/unit/house code
-	  chan,     %% device channel
+	  devchan,  %% device channel
 	  flags=[], %% device flags
 
 	  %% State
 	  active = false,  %% off
-	  level = 0        %% dim level
+	  level = 0,       %% dim level
+	  timer            %% To filter analog input
 	}).
 
 %% Loop data
@@ -77,6 +77,7 @@
 	  co_node, %% any identity of co_node i.e. serial | name | nodeid ...
 	  node_id, %% nodeid | xnodeid of co_node, needed in notify
 	           %% should maybe be fetched when needed instead of stored in loop data ??
+	  device,  %% device used
 	  items    %% controlled items
 	}).
 
@@ -180,30 +181,13 @@ init(Args) ->
 	    ?dbg(?SERVER,"init: No CANOpen node given.", []),
 	    {stop, no_co_node};
 	CoNode ->
-	    Simulated = proplists:get_value(simulated, Args, false),
 	    FileName = proplists:get_value(config, Args, "tellstick.conf"),
 	    ConfFile =  full_filename(FileName),
 	    ?dbg(?SERVER,"init: File = ~p", [ConfFile]),
 
 	    case load_config(ConfFile) of
 		{ok, Conf} ->
-		    if Simulated ->
-			    ?dbg(?SERVER,"init: Executing in simulated mode.",[]), 
-			    {ok, _Pid} = tellstick_drv:start_link([{device,simulated},
-							      {debug, get(dbg)}]);
-		       Conf#conf.device =:= undefined ->
-			    ?dbg(?SERVER,"init: Driver undefined.", []),
-			    %% How handle ??
-			    {ok, _Pid} = tellstick_drv:start_link([{device,simulated},
-							      {debug, get(dbg)}]);
-		       true ->
-			    Device = Conf#conf.device,
-			    TOut = proplists:get_value(retry_timeout, Args, 1000),
-			    ?dbg(?SERVER,"init: Device = ~p.", [Device]),
-			    {ok, _Pid} = tellstick_drv:start_link([{device,Device},
-								   {retry_timeout, TOut},
-								   {debug, get(dbg)}])
-		    end,
+		    Device = start_device(Args, Conf),
 		    {ok, _Dict} = co_api:attach(CoNode),
 		    Nid = co_api:get_option(CoNode, id),
 		    subscribe(CoNode),
@@ -214,6 +198,7 @@ init(Args) ->
 		    power_on(Nid, Conf#conf.items),
 		    process_flag(trap_exit, true),
 		    {ok, #ctx { co_node = CoNode, 
+				device = Device,
 				node_id = Nid, 
 				items=Conf#conf.items }};
 		Error ->
@@ -222,6 +207,29 @@ init(Args) ->
 			 [ConfFile]),
 		    {stop, Error}
 	    end
+    end.
+
+start_device(Args, Conf) ->
+    Simulated = proplists:get_value(simulated, Args, false),
+    if Simulated ->
+	    ?dbg(?SERVER,"init: Executing in simulated mode.",[]), 
+	    {ok, _Pid} = tellstick_drv:start_link([{device,simulated},
+						   {debug, get(dbg)}]),
+	    simulated;
+       Conf#conf.device =:= undefined ->
+	    ?dbg(?SERVER,"init: Driver undefined.", []),
+	    %% How handle ??
+	    {ok, _Pid} = tellstick_drv:start_link([{device,simulated},
+						   {debug, get(dbg)}]),
+	    simulated;
+       true ->
+	    Device = Conf#conf.device,
+	    TOut = proplists:get_value(retry_timeout, Args, 1000),
+	    ?dbg(?SERVER,"init: Device = ~p.", [Device]),
+	    {ok, _Pid} = tellstick_drv:start_link([{device,Device},
+						   {retry_timeout, TOut},
+						   {debug, get(dbg)}]),
+	    Device
     end.
 
 %%--------------------------------------------------------------------
@@ -280,8 +288,9 @@ handle_call({new_co_node, NewCoNode}, _From, Ctx=#ctx {co_node = OldCoNode}) ->
     {reply, ok, Ctx#ctx {co_node = NewCoNode, node_id = Nid }};
 
 handle_call(dump, _From, 
-	    Ctx=#ctx {co_node = CoNode, node_id = {Type,Nid}, items = Items}) ->
-    io:format("Ctx: CoNode = ~p, ", [CoNode]),
+	    Ctx=#ctx {co_node = CoNode, device = Device, 
+		      node_id = {Type,Nid}, items = Items}) ->
+    io:format("Ctx: CoNode = ~p, Device = ~p,", [CoNode, Device]),
     io:format("NodeId = {~p, ~.16#}, Items=\n", [Type, Nid]),
     lists:foreach(fun(Item) -> print_item(Item) end, Items),
     {reply, ok, Ctx};
@@ -346,6 +355,7 @@ handle_cast(_Msg, Ctx) ->
 %% @end
 %%--------------------------------------------------------------------
 -type info()::
+	{analog_input, Rid::integer(), Rchan::term(), Value::integer()} |
 	{'EXIT', Pid::pid(), co_node_terminated} |
 	term().
 
@@ -354,6 +364,19 @@ handle_cast(_Msg, Ctx) ->
 			 {noreply, Ctx::#ctx{}, Timeout::timeout()} |
 			 {stop, Reason::term(), Ctx::#ctx{}}.
 
+handle_info({analog_input, Rid, Rchan, Value}, 
+	    Ctx=#ctx {node_id = Nid, items = OldItems}) ->
+    %% Buffered analog input
+    ?dbg(?SERVER,"handle_info: analog_input.",[]),
+    case take_item(Rid, Rchan, OldItems) of
+	false ->
+	    ?dbg(?SERVER,"handle_info: analog_input, item ~p, ~p not found", 
+		 [Rid, Rchan]),
+	    {noreply,Ctx};
+	{value,Item,OtherItems} ->
+	    NewItems = exec_analog_input(Item,Nid,OtherItems,Value),
+	    {noreply, Ctx#ctx { items = NewItems }}
+    end;
 handle_info({'EXIT', _Pid, co_node_terminated}, Ctx) ->
     ?dbg(?SERVER,"handle_info: co_node terminated.",[]),
     {stop, co_node_terminated, Ctx};    
@@ -433,11 +456,17 @@ load_conf([C | Cs], Conf, Items) ->
     case C of
 	{Rid,Rchan,Type,Unit,Chan,Flags} ->
 	    RCobId = translate(Rid),
-	    Item = #item { rid=RCobId, rchan=Rchan, lchan=Rchan,
+	    Item = #item { rid=RCobId, rchan=Rchan, 
 			   type=Type, unit=Unit, 
-			   chan=Chan, flags=Flags,
+			   devchan=Chan, flags=Flags,
 			   active=false, level=0 },
-	    load_conf(Cs, Conf, [Item | Items]);
+	    case verify_item(Item) of
+		ok ->
+		    load_conf(Cs, Conf, [Item | Items]);
+		nok ->
+		    error_logger:error_msg("Inconsistent item ~p, could not be loaded\n", [Item]),
+		    load_conf(Cs, Conf, Items)
+	    end;
 	{product,Product1} ->
 	    load_conf(Cs, Conf#conf { product=Product1}, Items);
 	{device,Name} ->
@@ -446,11 +475,11 @@ load_conf([C | Cs], Conf, Items) ->
 	    {error, {unknown_config, C}}
     end;
 load_conf([], Conf, Items) ->
-    Dbg = get(dbg),
-    if Dbg ->
+    case get(dbg) of
+	true ->
 	    error_logger:info_msg("Loaded configuration: \n ",[]),
 	    lists:foreach(fun(Item) -> print_item(Item) end, Items);
-       true ->
+	_Other ->
 	    do_nothing
     end,
     if Conf#conf.product =:= undefined ->
@@ -459,6 +488,117 @@ load_conf([], Conf, Items) ->
 	    {ok, Conf#conf {items=Items}}
     end.
     
+verify_item(_I=#item {type = Type, unit = Unit, devchan = Channel, flags = Flags}) ->
+    case verify_unit_range(Type, Unit) of
+	ok ->
+	    case verify_channel_range(Type, Channel) of
+		ok ->
+		    verify_flags(Type, Flags);
+		nok ->
+		    nok
+	    end;
+	nok ->
+	    nok
+    end.
+
+verify_unit_range(nexa, Unit) 
+  when Unit >= $A,
+       Unit =< $P ->
+    ok;
+verify_unit_range(nexax, Unit) 
+  when Unit >= 0,
+       Unit =< 16#3fffffff ->
+    ok;
+verify_unit_range(waveman, Unit) 
+  when Unit >= $A,
+       Unit =< $P ->
+    ok;
+verify_unit_range(sartano, _Unit) ->
+    ok;
+verify_unit_range(ikea, Unit) 
+  when Unit >= 1,
+       Unit =< 16 ->
+    ok;
+verify_unit_range(risingsun, Unit) 
+  when Unit >= 1,
+       Unit =< 4 ->
+    ok;
+verify_unit_range(Type, Unit) ->
+    ?dbg(?SERVER,"verify_unit_range: invalid type/unit combination ~p,~p", 
+		   [Type, Unit]),
+    nok.
+
+verify_channel_range(nexa, Channel) 
+  when Channel >= 1,
+       Channel =< 16 ->
+    ok;
+verify_channel_range(nexax, Channel) 
+  when Channel >= 1,
+       Channel =< 16 ->
+    ok;
+verify_channel_range(waveman, Channel) 
+  when Channel >= 1,
+       Channel =< 16 ->
+    ok;
+verify_channel_range(sartano, Channel)
+  when Channel >= 1,
+       Channel =< 16#3ff ->
+   ok;
+verify_channel_range(ikea, Channel)
+  when Channel >= 1,
+       Channel =< 10 ->
+    ok;
+verify_channel_range(risingsun, Channel)
+  when Channel >= 1,
+       Channel =< 4 ->
+    ok;
+verify_channel_range(Type, Channel) ->
+    ?dbg(?SERVER,"verify_channel_range: invalid type/channel combination ~p,~p", 
+		   [Type, Channel]),
+    nok.
+
+
+verify_flags(_Type, []) ->
+    ok;
+verify_flags(Type, [digital | Flags]) 
+  when Type == nexa;
+       Type == nexax;
+       Type == waveman;
+       Type == sartano;
+       Type == ikea;
+       Type == risingsun ->
+    verify_flags(Type, Flags);
+verify_flags(Type, [springback | Flags]) 
+  when Type == nexa;
+       Type == waveman;
+       Type == sartano;
+       Type == risingsun ->
+    verify_flags(Type, Flags);
+verify_flags(Type, [analog | Flags]) 
+  when Type == nexax;
+       Type == ikea ->
+    verify_flags(Type, Flags);
+verify_flags(ikea = Type, [{analog_min, Min} | Flags]) 
+  when Min >= 0, Min =< 10 ->
+    verify_flags(Type, Flags);
+verify_flags(ikea = Type, [{analog_max, Max} | Flags]) 
+  when Max >= 0, Max =< 10 ->
+    verify_flags(Type, Flags);
+verify_flags(ikea = Type, [{style, Style} | Flags]) 
+  when Style == smooth;
+       Style == instant ->
+    verify_flags(Type, Flags);
+verify_flags(nexax = Type, [{analog_min, Min} | Flags]) 
+  when Min >= 0, Min =< 255 ->
+    verify_flags(Type, Flags);
+verify_flags(nexax = Type, [{analog_max, Max} | Flags]) 
+  when Max >= 0, Max =< 255 ->
+    verify_flags(Type, Flags);
+verify_flags(Type, [Flag | _Flags]) ->
+    ?dbg(?SERVER,"verify_flags: invalid type/flag combination ~p,~p", 
+		   [Type, Flag]),
+    nok.
+
 
 
 translate({xcobid, Func, Nid}) ->
@@ -476,16 +616,16 @@ power_command(Nid, Cmd, Items) ->
     lists:foreach(
       fun(I) ->
 	      Value = ((I#item.rid bsl 8) bor I#item.rchan) band 16#ffffffff, %% ??
-	      notify(Nid, pdo1_tx, Cmd, I#item.lchan, Value)
+	      notify(Nid, pdo1_tx, Cmd, I#item.rchan, Value)
       end,
       Items).
 
 reset_items(Items) ->
     lists:foreach(
       fun(I) ->
-	      ?dbg(?SERVER,"reset_items: resetting ~p, ~.16#, ~.16#", 
-		   [I#item.type,I#item.unit,I#item.chan]),
- 	      call(I#item.type,[I#item.unit,I#item.chan,false])
+	      ?dbg(?SERVER,"reset_items: resetting ~p, ~p, ~p", 
+		   [I#item.type,I#item.unit,I#item.devchan]),
+ 	      call(I#item.type,[I#item.unit,I#item.devchan,false,[]])
       end,
       Items).
 
@@ -505,7 +645,6 @@ handle_notify({RemoteId, Index, SubInd, Value}, Ctx) ->
     case take_item(RemoteId, SubInd, Ctx#ctx.items) of
 	false ->
 	    ?dbg(?SERVER,"take_item = false", []),
-	    lists:foreach(fun(Item) -> print_item(Item) end, Ctx#ctx.items),
 	    {noreply,Ctx};
 	{value,I,Is} ->
 	    case Index of
@@ -513,7 +652,7 @@ handle_notify({RemoteId, Index, SubInd, Value}, Ctx) ->
 		    Items = digital_input(Ctx#ctx.node_id,I,Is,Value),
 		    {noreply, Ctx#ctx { items=Items }};
 		?MSG_ANALOG ->
-		    Items = analog_input(Ctx#ctx.node_id,I,Is,Value),
+		    Items = analog_input(I,Is,Value),
 		    {noreply, Ctx#ctx { items=Items }};
 		?MSG_ENCODER ->
 		    Items = encoder_input(Ctx#ctx.node_id,I,Is,Value),
@@ -529,15 +668,15 @@ remote_power_off(_Rid, _Nid, _Is) ->
 
 remote_power_on(Rid, Nid, [I | Is]) when I#item.rid =:= Rid ->
     %% add channel (local chan = remote chan)
-    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ADD, I#item.lchan,
+    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ADD, I#item.rchan,
 	   ((Rid bsl 8) bor I#item.rchan) band 16#fffffff),
     %% update status
     AValue = if I#item.active -> 1; true -> 0 end,
-    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.lchan, AValue),
+    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.rchan, AValue),
     %% if dimmer then send level
     Analog = proplists:get_bool(analog, I#item.flags),
     if Analog ->
-	    notify(Nid, pdo1_tx, ?MSG_ANALOG, I#item.lchan, I#item.level);
+	    notify(Nid, pdo1_tx, ?MSG_ANALOG, I#item.rchan, I#item.level);
        true ->
 	    ok
     end,
@@ -563,7 +702,10 @@ digital_input(Nid, I, Is, Value) ->
 	    digital_input_call(Nid, I, Is, Active);
        Digital ->
 	    ?dbg(?SERVER,"digital_input: No action.", []),
-	    print_item(I),
+	    case get(dbg) of
+		true -> print_item(I);
+		_Other -> do_nothing
+	    end,
 	    [I | Is];
        true ->
 	    ?dbg(?SERVER,"Not digital device.", []),
@@ -572,41 +714,83 @@ digital_input(Nid, I, Is, Value) ->
 
 digital_input_call(Nid, I, Is, Active) -> 
     ?dbg(?SERVER,"digital_input: calling driver.",[]),
-    print_item(I),
-    case call(I#item.type,[I#item.unit,I#item.chan,Active]) of
+    case get(dbg) of
+	true -> print_item(I);
+	_Other -> do_nothing
+    end,
+    case call(I#item.type,[I#item.unit,I#item.devchan,Active,[]]) of
 	ok ->
 	    AValue = if Active -> 1; true -> 0 end,
-	    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.lchan, AValue),
+	    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.rchan, AValue),
 	    [I#item { active=Active} | Is];
 	_Error ->
 	    [I | Is]
     end.
 
-analog_input(Nid, I, Is, Value) ->
-    Analog = proplists:get_bool(analog, I#item.flags),
-    Min    = proplists:get_value(analog_min, I#item.flags, 0),
-    Max    = proplists:get_value(analog_max, I#item.flags, 255),
+analog_input(I=#item {rid = Rid, rchan = Rchan, timer = Timer, flags = Flags}, 
+	     Is, Value) ->
+    Analog = proplists:get_bool(analog, Flags),
     if Analog ->
-	    %% Scale 0-65535 => Min-Max
-	    IValue = trunc(Min + (Max-Min)*(Value/65535)),
-	    %% scale Min-Max => 0-65535 (adjusting the slider)
-	    RValue = trunc(65535*((IValue-Min)/(Max-Min))),
-	    ?dbg(?SERVER,"analog_input: calling driver.",[]),
-	    print_item(I),
-	    case call(I#item.type,[I#item.unit,I#item.chan,IValue]) of
-		ok ->
-		    notify(Nid, pdo1_tx, ?MSG_ANALOG, I#item.lchan, RValue),
-		    [I#item { level=RValue} | Is];
-		_Error ->
-		    [I | Is]
-	    end;
+	    if Timer =/= undefined ->
+		    timer:cancel(Timer);
+	       true ->
+		    do_nothing
+	    end,
+	    ?dbg(?SERVER,"analog_input: buffer call for ~p, ~p, ~p.",
+		 [Rid, Rchan, Value]),
+	    {ok, Tref} = 
+		timer:send_after(100, {analog_input, Rid, Rchan, Value}),
+	    [I#item {timer = Tref} | Is];
        true ->
+	    ?dbg(?SERVER,"analog_input: not analog device ~p, ~p, ignored.",
+		 [Rid, Rchan]),
 	    [I | Is]
     end.
 
+exec_analog_input(I=#item {type = Type, rchan = Rchan, flags = Flags, 
+			   unit = Unit, devchan = Dchan, active = Active}, 
+		  Nid, Is, Value) ->
+    Digital = proplists:get_bool(digital, Flags),
+    Min     = proplists:get_value(analog_min, Flags, 0),
+    Max     = proplists:get_value(analog_max, Flags, 255),
+    Style   = proplists:get_value(style, Flags, smooth),
+    %% Calculate actual level
+    %% Scale 0-65535 => Min-Max
+    IValue = trunc(Min + (Max-Min)*(Value/65535)),
+    %% scale Min-Max => 0-65535 (adjusting the slider)
+    RValue = trunc(65535*((IValue-Min)/(Max-Min))),
+    ?dbg(?SERVER,"analog_input: changing item:.",[]),
+    case get(dbg) of
+	true -> print_item(I);
+	_Other -> do_nothing
+    end,
+
+    ?dbg(?SERVER,"analog_input: calling driver with new value ~p",[IValue]),
+    case call(Type,[Unit,Dchan,IValue,[{style, Style}]]) of
+	ok ->
+	    %% Inform client of actual level
+	    NewI = 
+		case {Digital,RValue == 0,Active} of 
+		    {true, true, true} ->
+			%% Not turned off!
+			notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE,Rchan, RValue+1),
+			I#item {level=RValue, timer = undefined};
+		    {true, false, false} ->
+			%% Not turned on! How handle ???
+			notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE,Rchan, 0),
+			I#item {level=RValue, timer = undefined};
+		    _Any ->
+			notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE,Rchan, RValue),
+			I#item {level=RValue, timer = undefined, 
+				active = (RValue =/= 0)} 
+		   end,
+	    [NewI | Is];
+	_Error ->
+	    [I | Is]
+    end.
 
 notify(Nid, Func, Ix, Si, Value) ->
-    co_api:notify(Nid, Func, Ix, Si,co_codec:encode(Value, unsigned32)).
+    co_api:notify_from(Nid, Func, Ix, Si,co_codec:encode(Value, unsigned32)).
     
 encoder_input(_Nid, I, Is, _Value) ->
     ?dbg(?SERVER,"encoder_input: Not implemented yet.",[]),
@@ -631,9 +815,11 @@ call(Type, Args) ->
     
     
 print_item(Item) ->
-    io:format("Item = {Rid = ~.16#, Rchan = ~p, Lchan ~p, Type = ~p, Unit = ~p, Chan = ~p, Active = ~p, Level = ~p, Flags = ",
-	      [Item#item.rid, Item#item.rchan, Item#item.lchan, Item#item.type,
-	       Item#item.unit, Item#item.chan, Item#item.active, Item#item.level]),
+    io:format("Item = {Rid = ~.16#, Rchan = ~p, Type = ~p, Unit = ~p, Chan = ~p, "
+	      "Active = ~p, Level = ~p, Flags = ",
+	      [Item#item.rid, Item#item.rchan, 
+	       Item#item.type,Item #item.unit, Item#item.devchan, 
+	       Item#item.active, Item#item.level]),
     print_flags(Item#item.flags).
 
 print_flags([]) ->
