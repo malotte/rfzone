@@ -136,3 +136,11 @@ $ rebar doc
 ```
 
 
+### Device known to work
+
+Most nexa devices uses the nexa protocol
+Other like Proov use nexax.
+Products using protocol:
+
+risingsun
+Malmbergs EMW200R/T
