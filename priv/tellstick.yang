@@ -1,0 +1,241 @@
+/*
+ * YANG description of a tellstick configuration
+ *
+ */
+
+module tellstick {
+
+    namespace "http://rogvall.se/ns/tellstick";
+    prefix ts;
+
+    import uart { prefix uart; }
+
+    organization
+	"Rogvall Invest AB";
+
+    contact
+	"Tony Rogvall <tony@rogvall.se>";
+
+    description 
+	"Tellstick configuration description";
+
+    revision 2012-05-09 {
+       description
+         "Initial revision.";
+    }
+
+    grouping digital-control {
+	  description "Digital control (on/off).";
+	  leaf springback {
+	    description "Springs back ;-)";
+	    type boolean;
+	  }
+    } // end digital-control
+
+    grouping analog-control {
+      description "Analog control.";
+
+      leaf min {
+	description "Minimum value";
+	type uint32;
+	mandatory true;
+      }
+
+      leaf max {
+	description "Maximum value";
+	type uint32;
+	mandatory true;
+      }
+
+      leaf style {
+	description "Style for changing value";
+	type enumeration {
+	  enum smooth {
+	    description "Changes smoothly.";
+	  }
+	  enum instant {
+	    description "Jumps to new value";
+	  }
+	}
+      }
+    } // end analog-control
+
+    grouping remote-id {
+
+      leaf type-of-cobid {
+	description "Type of cobid used for communication.";
+	type enumeration {
+	  enum xcobid {
+	    description "Extended cobid.";
+	  }
+	  enum cobid {
+	    description "Short cobid.";
+	  }
+	}
+      }
+	
+      leaf function-code {
+	type enumeration {
+	  enum pdo1_tx {
+	    description "PDO1 transmit.";
+	  }
+	}
+      }
+
+      leaf remote-node-id {
+	description "The id of the remote CANopen node controlling
+                       the device.";
+	type uint32 {
+	  range "0 .. 16777215";
+	}
+      }
+    } // end remote-id
+
+    grouping tellstick-config {
+
+	leaf product {
+	    description "Product number.";
+	    type uint32;
+	    config false;
+	}
+
+	choice tellstick-device {
+	    description "Select the device used to communicate.";
+	    mandatory true;
+
+	    container uart-device {
+	      description "Device through which the tellstick is controlled.";
+	      uses uart:uart-config {
+		    refine device { mandatory true; }
+		    refine baud   { default 4800; }
+		}
+	    }
+
+	    container sim-device {
+	      description "Used for testing when no tellstick available.";
+		leaf filename {
+		    description "Filename of the ouput file to which output
+                                 data is written.";
+		    type string;
+		    mandatory true;
+		}
+		
+	    }
+	} // end tellstick-device
+
+	list item {
+	  description "Items controlled.";
+	  
+	  uses remote-id;
+
+	  leaf remote-channel {
+	    description "Channel in remote control application.";
+	    type uint16 {
+	      range "0 .. 127";
+	    }
+	  }
+
+	  choice protocol {
+
+	    container nexa {
+	      description "Nexa protocol.";
+	      uses digital-control;
+	      leaf unit {
+		description "Local unit";
+		type uint16 {
+		  range "65 .. 80"; //$A - $P
+		}
+	      }
+	      leaf channel {
+		description "Local channel.";
+		type uint16 {
+		  range "1 ..16";
+		}
+	      }
+	    }
+
+	    container nexax {
+	      description "Nexax protocol.";
+	      uses analog-control;
+	      uses digital-control;
+	      leaf unit {
+		description "Local unit.";
+		type uint32 {
+		  range "0 .. 1073741823"; // 0 - 16#3fffffff
+		}
+	      }
+	      leaf channel {
+		description "Local channel.";
+		type uint16 {
+		  range "1 ..16";
+		}
+	      }
+	    }
+
+	    container waveman {
+	      description "Waveman protocol.";
+	      uses digital-control;
+	      leaf unit {
+		description "Local unit";
+		type uint16 {
+		  range "65 .. 80"; //$A - $P
+		}
+	      }
+	      leaf channel {
+		description "Local channel.";
+		type uint16 {
+		  range "1 ..16";
+		}
+	      }
+	    }
+
+	    container sartano {
+	      description "Sartano protocol.";
+	      uses digital-control;
+	      leaf channel {
+		description "Local channel.";
+		type uint16 {
+		  range "1 ..1023"; // 1 - 16#3ff
+		}
+	      }
+	    }
+
+	    container ikea {
+	      description "IKEA protocol.";
+	      uses analog-control;
+	      uses digital-control;
+	      leaf unit {
+		description "Local unit.";
+		type uint16 {
+		  range "1 .. 16";
+		}
+	      }
+	      leaf channel {
+		description "Local channel.";
+		type uint16 {
+		  range "1 ..10";
+		}
+	      }
+	    }
+
+	    container risingsun {
+	      description "Risingsun protocol.";
+	      uses digital-control;
+	      leaf unit {
+		description "Local unit.";
+		type uint8 {
+		  range "1 .. 4"; 
+		}
+	      }
+	      leaf channel {
+		description "Local channel.";
+		type uint8 {
+		  range "1 ..4"; 
+		}
+	      }
+	    }
+
+	  } // end protocol
+	} // end item
+    } // end tellstick-config
+} 
