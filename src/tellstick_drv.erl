@@ -1,6 +1,7 @@
 %%%-------------------------------------------------------------------
 %%% @author Tony Rogvall <tony@rogvall.se>
-%%% @copyright (C) 2010, Tony Rogvall
+%%% @author Malotte Westman Lönne <malotte@malotte.net>
+%%% @copyright (C) 2012, Tony Rogvall
 %%% @doc
 %%%     TELLSTICK driver.
 %%%
@@ -15,15 +16,8 @@
 
 %% API
 -export([start_link/1, 
-	 stop/0]).
-
-%% gen_server callbacks
--export([init/1, 
-	 handle_call/3, 
-	 handle_cast/2, 
-	 handle_info/2,
-	 terminate/2, 
-	 code_change/3]).
+	 stop/0,
+	 change_device/1]).
 
 %% Remote control protocols
 -export([nexa/4, 
@@ -33,7 +27,15 @@
 	 ikea/4, 
 	 risingsun/4]).
 
-%% Aplied functions
+%% gen_server callbacks
+-export([init/1, 
+	 handle_call/3, 
+	 handle_cast/2, 
+	 handle_info/2,
+	 terminate/2, 
+	 code_change/3]).
+
+%% Applied functions
 -export([nexa_command/3, 
 	 nexax_command/3, 
 	 waveman_command/3, 
@@ -42,17 +44,24 @@
 	 risingsun_command/3]).
 
 %% Testing
--export([start_link/0, test/0, run_test/1, debug/1]).
+-export([start_link/0, 
+	 test/0, 
+	 run_test/1, 
+	 debug/1,
+	 setopt/1,
+	 command/1]).
+
 -define(SERVER, ?MODULE). 
 
 -record(ctx, 
 	{
 	  sl,             %% serial port descriptor
-	  device_name,    %% device string
+	  device,         %% device string and version
 	  command,        %% last command
 	  client,         %% last client
 	  reply = (<<>>), %% last reply
-	  timeout         %% retry timeout
+	  reply_timer,    %% timeout waiting for reply
+	  retry_timer     %% retry open port timeout
 	}).
 
 -define(TELLSTICK_SEND,  $S).       %% param byte...
@@ -69,7 +78,7 @@
 -define(US_TO_ASCII(U), ((U) div 10)).
 
 %% For dialyzer
--type start_options()::{device, Device::string() | simulated} |
+-type start_options()::{device, {Device::string() | simulated, v1 | v2}} |
 		       {retry_timeout, TimeOut::timeout()} |
 		       {debug, TrueOrFalse::boolean()}.
 
@@ -82,7 +91,7 @@
 %% @doc
 %% Starts the server.
 %%
-%% Device contains the path to the Device. <br/>
+%% Device contains the path to the Device and the version. <br/>
 %% Timeout =/= 0 means that if the driver fails to open the device it
 %% will try again in Timeout seconds.<br/>
 %% Debug controls trace output.<br/>
@@ -108,6 +117,18 @@ start_link(Opts) ->
 
 stop() ->
     gen_server:call(?SERVER, stop).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Changes device.
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec change_device({DeviceName::string(), Version::atom()}) -> 
+			   ok | {error, Error::term()}.
+
+change_device(NewDevice) ->
+    gen_server:call(?SERVER, {change_device, NewDevice}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -246,12 +267,19 @@ risingsun(Code,Unit,On,[]) when
 		   {ok, Pid::pid()} | ignore | {error, Error::term()}.
 
 start_link() ->
-    start_link([{debug, true}, {device,"/dev/tty.usbserial-A700eTGD"}]).
+    start_link([{debug, true}, {device,{"/dev/tty.usbserial-A900I902", v1}}]).
 
 %% @private
 debug(TrueOrFalse) when is_boolean(TrueOrFalse) ->
     gen_server:call(?SERVER, {debug, TrueOrFalse}).
 
+%% @private
+setopt(O={_Option, _Value}) ->
+    gen_server:cast(?SERVER, {setopt, O}).
+
+%% @private
+command(C) ->
+    gen_server:cast(?SERVER, {command,C}).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -275,36 +303,40 @@ init(Opts) ->
     Dbg = proplists:get_value(debug, Opts, false),
     put(dbg, Dbg),
 
-    DeviceName = 
+    Device = 
 	case proplists:lookup(device, Opts) of
 	    none ->
 		case os:getenv("TELLSTICK_DEVICE") of
-		    false ->
-			"/dev/tty.usbserial";
-		    Device -> Device
+		    false -> simulated;
+		    EnvDevice -> {EnvDevice, v1}
 		end;
-	    {_,Device} -> Device
+	    {_,OptDevice} -> OptDevice
 	end,
 
     RetryTimeout = proplists:get_value(retry_timeout, Opts, 1000),
-    S = #ctx { device_name=DeviceName, timeout = RetryTimeout},
+    S = #ctx { device=Device, retry_timer = RetryTimeout},
 
     case open(S) of
 	{ok, S1} -> {ok, S1};
 	Error -> {stop, Error}
     end.
 	    
-open(Ctx=#ctx {device_name = simulated }) ->
+open(Ctx=#ctx {device = {simulated, _Version} }) ->
     ?dbg(?SERVER,"TELLSTICK open: simulated\n", []),
     {ok, Ctx#ctx { sl=simulated }};
-open(Ctx=#ctx {device_name = DeviceName, timeout = RetryTimeout }) ->
+
+open(Ctx=#ctx {device = {DeviceName, Version}, retry_timer = RetryTimeout }) ->
 
     %% Only 4800 possible for tellstick ...
-    Speed = 4800,
+    Speed = case Version of
+		v1 -> 4800;
+		v2 -> 9600
+	    end,
 
-    case sl:open(DeviceName,[{baud,Speed}]) of
+    case sl:open(DeviceName,[{baud,Speed},{bufsz,10},{buftm, 1}]) of
 	{ok,SL} ->
-	    ?dbg(?SERVER,"TELLSTICK open: ~s@~w\n", [DeviceName,Speed]),
+	    ?dbg(?SERVER,"TELLSTICK open: ~s@~w -> ~p", [DeviceName,Speed,SL]),
+	    sl:send(SL, "V+"),
 	    {ok, Ctx#ctx { sl=SL }};
 	{error, E} when E == eaccess;
 			E == enoent ->
@@ -318,6 +350,12 @@ open(Ctx=#ctx {device_name = DeviceName, timeout = RetryTimeout }) ->
 	    Error
     end.
 
+close(Ctx=#ctx {sl = SL}) when is_port(SL) ->
+    ?dbg(?SERVER,"TELLSTICK close: ~p", [SL]),
+    sl:close(SL),
+    {ok, Ctx#ctx { sl=undefined }};
+close(Ctx) ->
+    {ok, Ctx}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -333,6 +371,7 @@ open(Ctx=#ctx {device_name = DeviceName, timeout = RetryTimeout }) ->
 	{sartano, Channel::integer(), On::boolean()} |
 	{ikea, System::integer(), Channel::integer(), Level::integer(), Style:: 0 | 1} |
 	{risingsun, Code::integer(), Unit::integer(), On::boolean()} |
+	{change_device, {DeviceName::string(), Version::atom()}} |
 	{debug, TrueOrFalse::boolean()} |
 	stop.
 
@@ -355,9 +394,18 @@ handle_call({ikea,System,Channel,Level,Style},From,Ctx) ->
 handle_call({risingsun,Code,Unit,On},From,Ctx) ->
     command(risingsun_command, [Code,Unit,On], Ctx#ctx {client = From});
 
-handle_call({debug, TrueOrFalse}, _From, LoopData) ->
+handle_call({change_device, Device={_DeviceName, _Version}}, _From, Ctx) ->
+    close(Ctx),
+    case open(Ctx#ctx {device = Device}) of
+	{ok, Ctx1} ->
+	     {reply, ok, Ctx1};
+	Error ->
+	    {reply, Error, Ctx}
+    end;
+
+handle_call({debug, TrueOrFalse}, _From, Ctx) ->
     put(dbg, TrueOrFalse),
-    {reply, ok, LoopData};
+    {reply, ok, Ctx};
 
 handle_call(stop, _From, Ctx) ->
     {stop, normal, ok, Ctx};
@@ -371,7 +419,8 @@ command(F, Args, Ctx=#ctx {sl = SL}) when SL =/= undefined ->
 	    case send_command(SL, Command) of
 		ok ->
 		    %% Wait for confirmation
-		    {noreply,Ctx#ctx {command = Command}};
+		    {ok, TRef} = timer:send_after(5000, timeout),
+		    {noreply,Ctx#ctx {command = Command, reply_timer = TRef}};
 		{simulated, ok} ->
 		    {reply, ok, Ctx};
 		Other ->
@@ -396,6 +445,15 @@ command(_F, _Args, Ctx) ->
 			 {noreply, Ctx::#ctx{}} |
 			 {stop, Reason::term(), Ctx::#ctx{}}.
 
+handle_cast({setopt, {Option, Value}}, Ctx=#ctx {sl = SL}) ->
+    ?dbg(?SERVER,"handle_cast: setopt ~p = ~p", [Option, Value]),
+    sl:setopt(SL, Option, Value),
+    {noreply, Ctx};
+handle_cast({command, Command}, Ctx=#ctx {sl = SL}) ->
+    ?dbg(?SERVER,"handle_cast: command ~p", [Command]),
+    Reply = sl:send(SL, Command),
+    ?dbg(?SERVER,"handle_cast: command reply ~p", [Reply]),
+    {noreply, Ctx};
 handle_cast(_Msg, Ctx) ->
     ?dbg(?SERVER,"handle_cast: Unknown message ~p", [_Msg]),
     {noreply, Ctx}.
@@ -416,17 +474,30 @@ handle_cast(_Msg, Ctx) ->
 			 {noreply, Ctx::#ctx{}} |
 			 {stop, Reason::term(), Ctx::#ctx{}}.
 
-handle_info(retry, S) ->
+handle_info(retry, Ctx) ->
     ?dbg(?SERVER,"handle_info: retry open port", []),
-    case open(S) of
-	{ok, S1} -> {noreply, S1};
-	Error -> {stop, Error, S}
+    case open(Ctx) of
+	{ok, Ctx1} -> {noreply, Ctx1};
+	Error -> {stop, Error, Ctx}
     end;
-handle_info({_Port, {data, Data}}, Ctx=#ctx {reply = Reply, client = Client}) 
+handle_info(timeout,  Ctx=#ctx {client = Client}) ->
+    ?dbg(?SERVER,"handle_info: timeout waiting for port", []),
+    gen_server:reply(Client, {error, port_timeout}),
+    {noreply, Ctx#ctx {reply = <<>>, client = undefined}};
+handle_info({_Port, {data, Data}}, 
+	    Ctx=#ctx {reply = Reply, client = Client, reply_timer = TRef}) 
  when Client =/= undefined ->
     ?dbg(?SERVER,"handle_info: port data ~p", [Data]),
+
     %% Reply from port
+    timer:cancel(TRef),
     NewReply = <<Reply/binary, Data/binary>>,
+
+    %% To ensure quick feeadback
+    case binary:match(Data,<<"+">>) of
+	{0,1} -> gen_server:reply(Client, ok);
+	_Other -> do_nothing
+    end,
 
     case binary:split(NewReply, <<$\n>>) of
 	[NewReply] ->
@@ -434,7 +505,7 @@ handle_info({_Port, {data, Data}}, Ctx=#ctx {reply = Reply, client = Client})
 	[_Reply1, Rest] ->
 	    %% Match against command ???
 	    ?dbg(?SERVER,"handle_info: reply ~p", [_Reply1]),
-	    gen_server:reply(Client, ok),
+	    %% gen_server:reply(Client, ok),
 	    {noreply, Ctx#ctx {reply = Rest, client = undefined}}
     end;
 handle_info(_Info, Ctx) ->
@@ -454,7 +525,8 @@ handle_info(_Info, Ctx) ->
 -spec terminate(Reason::term(), Ctx::#ctx{}) -> 
 		       ok.
 
-terminate(_Reason, _Ctx) ->
+terminate(_Reason, Ctx) ->
+    close(Ctx),
     ok.
 
 %%--------------------------------------------------------------------

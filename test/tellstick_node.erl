@@ -70,7 +70,6 @@ stop() ->
 start_tellstick() ->
     tellstick_srv:start_link([{debug, true},
 			      {config, "/Users/malotte/erlang/tellstick/test/tellstick_SUITE_data/tellstick.conf"},
-%%			      {simulated, true},
 			      {co_node, serial()}]).
    
 

@@ -37,18 +37,23 @@
 	 dump/0]).
 
 -define(SERVER, ?MODULE). 
+
+%% CANopen indexes
 -define(COMMANDS,[{{?MSG_POWER_ON, 0}, ?INTEGER, 0},
 		  {{?MSG_POWER_OFF, 0}, ?INTEGER, 0},
 		  {{?MSG_DIGITAL, 0}, ?INTEGER, 0},
 		  {{?MSG_ANALOG, 0}, ?INTEGER, 0},
 		  {{?MSG_ENCODER, 0}, ?INTEGER, 0}]).
 
+%% Default tellstick version
+-define(DEF_VERSION, v1).
 
-%% 
+%% Tellstick configuration from file
 -record(conf,
 	{
 	  product,
-	  device,
+	  device = {simulated, ?DEF_VERSION},
+	  version,
 	  items
 	}).
 
@@ -59,11 +64,11 @@
 	  rid,    %% remote id
 	  rchan,  %% remote channel
 
-	  %% Device ID
+	  %% Local ID
 	  type,     %% nexa, ikea ...
 	  unit,     %% serial/unit/house code
-	  devchan,  %% device channel
-	  flags=[], %% device flags
+	  lchan,    %% Local channel
+	  flags=[], %% Control flags
 
 	  %% State
 	  active = false,  %% off
@@ -86,7 +91,7 @@
 		       {config, File::string()} |
 		       {reset, TrueOrFalse::boolean()} |
 		       {retry_timeout, TimeOut::timeout()} |
-		       {simulated, TrueOrFalse::boolean()} |
+%%		       {simulated, TrueOrFalse::boolean()} |
 		       {linked, TrueOrFalse::boolean()} |
 		       {debug, TrueOrFalse::boolean()}.
 
@@ -210,18 +215,12 @@ init(Args) ->
     end.
 
 start_device(Args, Conf) ->
-    Simulated = proplists:get_value(simulated, Args, false),
-    if Simulated ->
-	    ?dbg(?SERVER,"init: Executing in simulated mode.",[]), 
-	    {ok, _Pid} = tellstick_drv:start_link([{device,simulated},
-						   {debug, get(dbg)}]),
-	    simulated;
-       Conf#conf.device =:= undefined ->
-	    ?dbg(?SERVER,"init: Driver undefined.", []),
+    if Conf#conf.device =:= undefined ->
+	    ?dbg(?SERVER,"init: Driver undefined, running simulated.", []),
 	    %% How handle ??
-	    {ok, _Pid} = tellstick_drv:start_link([{device,simulated},
+	    {ok, _Pid} = tellstick_drv:start_link([{device,{simulated, ?DEF_VERSION}},
 						   {debug, get(dbg)}]),
-	    simulated;
+	    undefined;
        true ->
 	    Device = Conf#conf.device,
 	    TOut = proplists:get_value(retry_timeout, Args, 1000),
@@ -261,17 +260,56 @@ start_device(Args, Conf) ->
 			 {stop, Reason::atom(), Reply::term(), Ctx::#ctx{}}.
 
 
-handle_call({reload, File}, _From, Ctx=#ctx {node_id = Nid, items = OldItems}) ->
+handle_call({reload, File}, _From, 
+	    Ctx=#ctx {node_id = Nid, device = OldDevice, items = OldItems}) ->
     ?dbg(?SERVER,"reload ~p",[File]),
     ConfFile = full_filename(File),
     case load_config(ConfFile) of
-	{ok,Conf} ->
-	    NewItems = Conf#conf.items,
-	    ItemsToAdd = lists:usort(NewItems) -- lists:usort(OldItems),
-	    ItemsToRemove = lists:usort(OldItems) -- lists:usort(NewItems),
+	{ok,_Conf=#conf {device = NewDevice, items = NewItems}} ->
+	    if NewDevice =/= OldDevice ->
+		    tellstick_drv:change_device(NewDevice);
+	       true ->
+		    do_nothing
+	    end,
+		    
+	    NewItemIds = 
+		lists:foldl(
+		  fun(_Item=#item {rid = Rid, rchan = Rchan}, Ids) ->
+			  [{Rid, Rchan} | Ids]
+		  end, [], NewItems),
+	    OldItemIds = 
+		lists:foldl(
+		  fun(_Item=#item {rid = Rid, rchan = Rchan}, Ids) ->
+			  [{Rid, Rchan} | Ids]
+		  end, [], OldItems),
+
+	    ItemIdsToAdd = lists:usort(NewItemIds) -- lists:usort(OldItemIds),
+	    ItemIdsToRemove = lists:usort(OldItemIds) -- lists:usort(NewItemIds),
+
+	    ?dbg(?SERVER,"\nold items = ~p\n new items ~p\n "
+		 "items to add ~p\n items to remove ~p\n",
+		 [OldItemIds, NewItemIds, ItemIdsToAdd, ItemIdsToRemove]),
+
+	    ItemsToAdd = 
+		lists:foldl(
+		  fun(Item=#item {rid = Rid, rchan = Rchan}, Items) ->
+			  case lists:member({Rid, Rchan}, ItemIdsToAdd) of
+			      true -> [ Item | Items ];
+			      false -> Items
+			  end
+		  end, [], NewItems),
+	    ItemsToRemove = 
+		lists:foldl(
+		  fun(Item=#item {rid = Rid, rchan = Rchan}, Items) ->
+			  case lists:member({Rid, Rchan}, ItemIdsToRemove) of
+			      true -> [ Item | Items ];
+			      false -> Items
+			  end
+		  end, [], OldItems),
+
 	    power_on(Nid, ItemsToAdd),
 	    power_off(Nid, ItemsToRemove),
-	    {reply, ok, Ctx#ctx {items = NewItems}};
+	    {reply, ok, Ctx#ctx {items = NewItems, device = NewDevice}};
 	Error ->
 	    {reply, Error, Ctx}
     end;
@@ -458,7 +496,7 @@ load_conf([C | Cs], Conf, Items) ->
 	    RCobId = translate(Rid),
 	    Item = #item { rid=RCobId, rchan=Rchan, 
 			   type=Type, unit=Unit, 
-			   devchan=Chan, flags=Flags,
+			   lchan=Chan, flags=Flags,
 			   active=false, level=0 },
 	    case verify_item(Item) of
 		ok ->
@@ -469,8 +507,11 @@ load_conf([C | Cs], Conf, Items) ->
 	    end;
 	{product,Product1} ->
 	    load_conf(Cs, Conf#conf { product=Product1}, Items);
+	{device,Name,Version} ->
+	    load_conf(Cs, Conf#conf { device={Name, Version}}, Items);
 	{device,Name} ->
-	    load_conf(Cs, Conf#conf { device=Name}, Items);
+	    %% Use default version
+	    load_conf(Cs, Conf#conf { device={Name, ?DEF_VERSION}}, Items);
 	_ ->
 	    {error, {unknown_config, C}}
     end;
@@ -488,7 +529,7 @@ load_conf([], Conf, Items) ->
 	    {ok, Conf#conf {items=Items}}
     end.
     
-verify_item(_I=#item {type = Type, unit = Unit, devchan = Channel, flags = Flags}) ->
+verify_item(_I=#item {type = Type, unit = Unit, lchan = Channel, flags = Flags}) ->
     case verify_unit_range(Type, Unit) of
 	ok ->
 	    case verify_channel_range(Type, Channel) of
@@ -624,8 +665,8 @@ reset_items(Items) ->
     lists:foreach(
       fun(I) ->
 	      ?dbg(?SERVER,"reset_items: resetting ~p, ~p, ~p", 
-		   [I#item.type,I#item.unit,I#item.devchan]),
- 	      call(I#item.type,[I#item.unit,I#item.devchan,false,[]])
+		   [I#item.type,I#item.unit,I#item.lchan]),
+ 	      call(I#item.type,[I#item.unit,I#item.lchan,false,[]])
       end,
       Items).
 
@@ -708,7 +749,7 @@ digital_input(Nid, I, Is, Value) ->
 	    end,
 	    [I | Is];
        true ->
-	    ?dbg(?SERVER,"Not digital device.", []),
+	    ?dbg(?SERVER,"Not digital item.", []),
 	    [I | Is]
     end.
 
@@ -718,7 +759,7 @@ digital_input_call(Nid, I, Is, Active) ->
 	true -> print_item(I);
 	_Other -> do_nothing
     end,
-    case call(I#item.type,[I#item.unit,I#item.devchan,Active,[]]) of
+    case call(I#item.type,[I#item.unit,I#item.lchan,Active,[]]) of
 	ok ->
 	    AValue = if Active -> 1; true -> 0 end,
 	    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.rchan, AValue),
@@ -742,13 +783,13 @@ analog_input(I=#item {rid = Rid, rchan = Rchan, timer = Timer, flags = Flags},
 		timer:send_after(100, {analog_input, Rid, Rchan, Value}),
 	    [I#item {timer = Tref} | Is];
        true ->
-	    ?dbg(?SERVER,"analog_input: not analog device ~p, ~p, ignored.",
+	    ?dbg(?SERVER,"analog_input: not analog item ~p, ~p, ignored.",
 		 [Rid, Rchan]),
 	    [I | Is]
     end.
 
 exec_analog_input(I=#item {type = Type, rchan = Rchan, flags = Flags, 
-			   unit = Unit, devchan = Dchan, active = Active}, 
+			   unit = Unit, lchan = Dchan, active = Active}, 
 		  Nid, Is, Value) ->
     Digital = proplists:get_bool(digital, Flags),
     Min     = proplists:get_value(analog_min, Flags, 0),
@@ -818,7 +859,7 @@ print_item(Item) ->
     io:format("Item = {Rid = ~.16#, Rchan = ~p, Type = ~p, Unit = ~p, Chan = ~p, "
 	      "Active = ~p, Level = ~p, Flags = ",
 	      [Item#item.rid, Item#item.rchan, 
-	       Item#item.type,Item #item.unit, Item#item.devchan, 
+	       Item#item.type,Item #item.unit, Item#item.lchan, 
 	       Item#item.active, Item#item.level]),
     print_flags(Item#item.flags).
 

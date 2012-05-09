@@ -66,7 +66,7 @@ In the SeaZone app you must define devices corresponding to the real devices you
 Arguments to all applicable erlang applications are specified in an erlang configuration file.<br/>
 An example can be found in ["sys.config"](https://github.com/malotte/tellstick/raw/master/sys.config).<br/>
 
-tellstick uses a config file where the devices to control are specified, the syntax is explained in the file. A description is also available in [User's Guide - How to configure tellstick](wiki/howto_configure_tellstick).<br/>
+tellstick uses a config file where the devices to control are specified, the syntax is explained in the file. A description is also available in [User's Guide - How to configure tellstick](https://github.com/malotte/tellstick/wiki/howto_configure_tellstick).<br/>
 The device for the tellstick usb pin is also specified in this file. <br/>
 
 Default file is ["tellstick/priv/tellstick.conf"](https://github.com/malotte/tellstick/raw/master/priv/tellstick.conf).<br/>

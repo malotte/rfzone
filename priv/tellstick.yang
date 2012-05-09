@@ -129,14 +129,15 @@ module tellstick {
 
 	    leaf sim-device {
 	      description "Used for testing when no tellstick available.";
-	      type boolean; // ??
+	      type empty; // ??
 	    }
 
 	} // end tellstick-device
 
 	list item {
 	  description "Items controlled.";
-	  
+	  key "remote-id remote-channel";
+
 	  uses remote-id;
 
 	  leaf remote-channel {
