@@ -48,7 +48,7 @@ module tellstick {
       }
 
       leaf style {
-	description "Style for changing value";
+	description "Style for changing value.";
 	type enumeration {
 	  enum smooth {
 	    description "Changes smoothly.";
@@ -105,22 +105,33 @@ module tellstick {
 
 	    container uart-device {
 	      description "Device through which the tellstick is controlled.";
-	      uses uart:uart-config {
+	      
+	      choice version {
+
+		container v1 {
+		  description "Version 1??.";
+		  uses uart:uart-config {
 		    refine device { mandatory true; }
-		    refine baud   { default 4800; }
+		    refine baud   { default 4800; config false; }
+		  }
 		}
+
+		container v2 {
+		  description "Version 2??.";
+		  uses uart:uart-config {
+		    refine device { mandatory true; }
+		    refine baud   { default 9600; config false; }
+		  }
+		}
+	      } // end version
+
+	    } // end uart-device
+
+	    leaf sim-device {
+	      description "Used for testing when no tellstick available.";
+	      type boolean; // ??
 	    }
 
-	    container sim-device {
-	      description "Used for testing when no tellstick available.";
-		leaf filename {
-		    description "Filename of the ouput file to which output
-                                 data is written.";
-		    type string;
-		    mandatory true;
-		}
-		
-	    }
 	} // end tellstick-device
 
 	list item {
