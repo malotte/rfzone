@@ -337,17 +337,8 @@ handle_call({debug, TrueOrFalse}, _From, Ctx) ->
     put(dbg, TrueOrFalse),
     {reply, ok, Ctx};
 
-handle_call(stop, _From, Ctx=#ctx {co_node = CoNode}) ->
+handle_call(stop, _From, Ctx) ->
     ?dbg(?SERVER,"stop:",[]),
-    case co_api:alive(CoNode) of
-	true ->
-	    unsubscribe(CoNode),
-	    ?dbg(?SERVER,"stop: unsubscribed.",[]),
-	    co_api:detach(CoNode);
-	false -> 
-	    do_nothing %% Not possible to detach and unsubscribe
-    end,
-    ?dbg(?SERVER,"stop: detached.",[]),
     {stop, normal, ok, Ctx};
 
 handle_call(_Request, _From, Ctx) ->
@@ -412,6 +403,8 @@ handle_info({analog_input, Rid, Rchan, Value},
 		 [Rid, Rchan]),
 	    {noreply,Ctx};
 	{value,Item,OtherItems} ->
+	    ?dbg(?SERVER,"analog_input: received buffered call for ~.16#, ~p, ~p.",
+		 [Rid, Rchan, Value]),
 	    NewItems = exec_analog_input(Item,Nid,OtherItems,Value),
 	    {noreply, Ctx#ctx { items = NewItems }}
     end;
@@ -428,8 +421,17 @@ handle_info(_Info, Ctx) ->
 -spec terminate(Reason::term(), Ctx::#ctx{}) -> 
 		       no_return().
 
-terminate(_Reason, _Ctx) ->
+terminate(_Reason, _Ctx=#ctx {co_node = CoNode}) ->
     ?dbg(?SERVER,"terminate: Reason = ~p",[_Reason]),
+    case co_api:alive(CoNode) of
+	true ->
+	    unsubscribe(CoNode),
+	    ?dbg(?SERVER,"terminate: unsubscribed.",[]),
+	    co_api:detach(CoNode);
+	false -> 
+	    do_nothing %% Not possible to detach and unsubscribe
+    end,
+    ?dbg(?SERVER,"terminate: detached.",[]),
     tellstick_drv:stop(),
     ?dbg(?SERVER,"terminate: driver stopped.",[]),
     ok.
@@ -690,13 +692,13 @@ handle_notify({RemoteId, Index, SubInd, Value}, Ctx) ->
 	{value,I,Is} ->
 	    case Index of
 		?MSG_DIGITAL ->
-		    Items = digital_input(Ctx#ctx.node_id,I,Is,Value),
+		    Items = digital_input(I,Ctx#ctx.node_id,Is,Value),
 		    {noreply, Ctx#ctx { items=Items }};
 		?MSG_ANALOG ->
 		    Items = analog_input(I,Is,Value),
 		    {noreply, Ctx#ctx { items=Items }};
 		?MSG_ENCODER ->
-		    Items = encoder_input(Ctx#ctx.node_id,I,Is,Value),
+		    Items = encoder_input(I,Ctx#ctx.node_id,Is,Value),
 		    {noreply, Ctx#ctx { items=Items }};
 		_ ->
 		    {noreply,Ctx}
@@ -732,15 +734,15 @@ remote_power_on(_Rid, _Nid, []) ->
 %%
 %% Digital input
 %%
-digital_input(Nid, I, Is, Value) ->
+digital_input(I, Nid, Is, Value) ->
     Digital    = proplists:get_bool(digital, I#item.flags),
     SpringBack = proplists:get_bool(springback, I#item.flags),
     if Digital, SpringBack, Value =:= 1 ->
 	    Active = not I#item.active,
-	    digital_input_call(Nid, I, Is, Active);
+	    digital_input_call(I, Nid, Is, Active);
        Digital, not SpringBack ->
 	    Active = Value =:= 1,
-	    digital_input_call(Nid, I, Is, Active);
+	    digital_input_call(I, Nid, Is, Active);
        Digital ->
 	    ?dbg(?SERVER,"digital_input: No action.", []),
 	    case get(dbg) of
@@ -753,7 +755,7 @@ digital_input(Nid, I, Is, Value) ->
 	    [I | Is]
     end.
 
-digital_input_call(Nid, I, Is, Active) -> 
+digital_input_call(I, Nid, Is, Active) -> 
     ?dbg(?SERVER,"digital_input: calling driver.",[]),
     case get(dbg) of
 	true -> print_item(I);
@@ -777,7 +779,7 @@ analog_input(I=#item {rid = Rid, rchan = Rchan, timer = Timer, flags = Flags},
 	       true ->
 		    do_nothing
 	    end,
-	    ?dbg(?SERVER,"analog_input: buffer call for ~p, ~p, ~p.",
+	    ?dbg(?SERVER,"analog_input: buffer call for ~.16#, ~p, ~p.",
 		 [Rid, Rchan, Value]),
 	    {ok, Tref} = 
 		timer:send_after(100, {analog_input, Rid, Rchan, Value}),
@@ -791,6 +793,12 @@ analog_input(I=#item {rid = Rid, rchan = Rchan, timer = Timer, flags = Flags},
 exec_analog_input(I=#item {type = Type, rchan = Rchan, flags = Flags, 
 			   unit = Unit, lchan = Dchan, active = Active}, 
 		  Nid, Is, Value) ->
+    ?dbg(?SERVER,"exec_analog_input: updating item:.",[]),
+    case get(dbg) of
+	true -> print_item(I);
+	_Other -> do_nothing
+    end,
+
     Digital = proplists:get_bool(digital, Flags),
     Min     = proplists:get_value(analog_min, Flags, 0),
     Max     = proplists:get_value(analog_max, Flags, 255),
@@ -800,31 +808,25 @@ exec_analog_input(I=#item {type = Type, rchan = Rchan, flags = Flags,
     IValue = trunc(Min + (Max-Min)*(Value/65535)),
     %% scale Min-Max => 0-65535 (adjusting the slider)
     RValue = trunc(65535*((IValue-Min)/(Max-Min))),
-    ?dbg(?SERVER,"analog_input: changing item:.",[]),
-    case get(dbg) of
-	true -> print_item(I);
-	_Other -> do_nothing
-    end,
 
     ?dbg(?SERVER,"analog_input: calling driver with new value ~p",[IValue]),
     case call(Type,[Unit,Dchan,IValue,[{style, Style}]]) of
 	ok ->
-	    %% Inform client of actual level
-	    NewI = 
-		case {Digital,RValue == 0,Active} of 
-		    {true, true, true} ->
-			%% Not turned off!
-			notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE,Rchan, RValue+1),
-			I#item {level=RValue, timer = undefined};
-		    {true, false, false} ->
-			%% Not turned on! How handle ???
-			notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE,Rchan, 0),
-			I#item {level=RValue, timer = undefined};
-		    _Any ->
-			notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE,Rchan, RValue),
-			I#item {level=RValue, timer = undefined, 
-				active = (RValue =/= 0)} 
-		   end,
+	    %% For devices without digital control output_active
+	    %% is sent when level is changed from/to 0
+	    case {Digital,RValue == 0,Active} of 
+		{false, false, false} ->
+		    %% Slider "turned on"
+		    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE,Rchan, 1);
+		{false, true, true} ->
+		    %% Slider "turned off"
+		    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE,Rchan, 0);
+		_Any ->
+		    do_nothing
+	    end,
+	    notify(Nid, pdo1_tx, ?MSG_OUTPUT_VALUE,Rchan, RValue),
+	    NewI = I#item {level=RValue, timer = undefined, 
+			    active = ((RValue =/= 0) andalso not Digital)}, 
 	    [NewI | Is];
 	_Error ->
 	    [I | Is]

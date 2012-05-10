@@ -54,6 +54,7 @@ start() ->
     {ok, _PPid} = co_proc:start_link([{linked, false}]),
     {ok, _NPid} = co_api:start_link(Serial, 
 				     [{linked, false},
+				      {name, co_tellstick},
 				      {use_serial_as_xnodeid, true},
 				      {max_blksize, 7},
 				      {vendor,?SEAZONE},
@@ -68,7 +69,8 @@ stop() ->
     can_router:stop().
 
 start_tellstick() ->
-    tellstick_srv:start_link([{debug, true},
+    tellstick_srv:start_link([{linked, false},
+			      {debug, true},
 			      {config, "/Users/malotte/erlang/tellstick/test/tellstick_SUITE_data/tellstick.conf"},
 			      {co_node, serial()}]).
    
