@@ -480,7 +480,7 @@ take_item(Rid, Rchan, [I=#item {rid=Rid,rchan=Rchan}|Is], Acc) ->
     {value,I,Is++Acc};
 take_item(Rid, Rchan, [I|Is],Acc) ->
     take_item(Rid,Rchan,Is,[I|Acc]);
-take_item(_Rid, _Rchan, [],_acc) ->
+take_item(_Rid, _Rchan, [],_Acc) ->
     false.
 
 

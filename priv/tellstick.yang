@@ -24,6 +24,18 @@ module tellstick {
          "Initial revision.";
     }
 
+    typedef on-off {
+      description "On/Off.";
+      type enumeration {
+	enum on {
+	  description "Item is on.";
+	}
+	enum off {
+	  description "Item is off.";
+	}
+      }
+    }
+
     grouping digital-control {
 	  description "Digital control (on/off).";
 	  leaf springback {
@@ -47,6 +59,12 @@ module tellstick {
 	mandatory true;
       }
 
+      leaf level {
+	description "Current level value.";
+	type uint32;
+	mandatory true;
+      }
+
       leaf style {
 	description "Style for changing value.";
 	type enumeration {
@@ -58,6 +76,7 @@ module tellstick {
 	  }
 	}
       }
+	
     } // end analog-control
 
     grouping remote-id {
@@ -136,7 +155,24 @@ module tellstick {
 
 	list item {
 	  description "Items controlled.";
-	  key "remote-id remote-channel";
+	  key "id";
+	  
+	  leaf id {
+	    description "Item number.";
+	    type uint32; // Range ??
+	    mandatory true;
+	  }
+
+	  leaf label {
+	    description "Short descriptive name.";
+	    type string;
+	  }
+
+	  leaf item-description {
+	    description "Longer item description.";
+	    type string;
+
+	  }
 
 	  uses remote-id;
 
@@ -145,8 +181,16 @@ module tellstick {
 	    type uint16 {
 	      range "0 .. 127";
 	    }
+	    mandatory true;
 	  }
 
+	  leaf state {
+	    description "Item state";
+	    type on-off;
+	    config false;
+	    mandatory true;
+	  }
+	  
 	  choice protocol {
 
 	    container nexa {
@@ -250,4 +294,28 @@ module tellstick {
 	  } // end protocol
 	} // end item
     } // end tellstick-config
+
+    rpc analog_input { 
+      description "Change level.";
+      input {
+	leaf item-id {
+	  type uint32;
+	}
+	leaf level {
+	  type uint32;
+	}
+      }
+    }
+
+    rpc digital_input {
+      description "Turn On/Off.";
+      input {
+	leaf item-id {
+	  type uint32;
+	}
+	leaf action {
+	  type on-off;
+	}
+      }
+    }
 } 
