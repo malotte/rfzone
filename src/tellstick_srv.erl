@@ -1,3 +1,19 @@
+%%%---- BEGIN COPYRIGHT --------------------------------------------------------
+%%%
+%%% Copyright (C) 2007 - 2012, Rogvall Invest AB, <tony@rogvall.se>
+%%%
+%%% This software is licensed as described in the file COPYRIGHT, which
+%%% you should have received as part of this distribution. The terms
+%%% are also available at http://www.rogvall.se/docs/copyright.txt.
+%%%
+%%% You may opt to use, copy, modify, merge, publish, distribute and/or sell
+%%% copies of the Software, and permit persons to whom the Software is
+%%% furnished to do so, under the terms of the COPYRIGHT file.
+%%%
+%%% This software is distributed on an "AS IS" basis, WITHOUT WARRANTY OF ANY
+%%% KIND, either express or implied.
+%%%
+%%%---- END COPYRIGHT ----------------------------------------------------------
 %%%-------------------------------------------------------------------
 %%% @author Tony Rogvall <tony@rogvall.se>
 %%% @author Malotte Westman Lönne <malotte@malotte.net>
@@ -775,14 +791,14 @@ analog_input(I=#item {rid = Rid, rchan = Rchan, timer = Timer, flags = Flags},
     Analog = proplists:get_bool(analog, Flags),
     if Analog ->
 	    if Timer =/= undefined ->
-		    timer:cancel(Timer);
+		    erlang:cancel_timer(Timer);
 	       true ->
 		    do_nothing
 	    end,
 	    ?dbg(?SERVER,"analog_input: buffer call for ~.16#, ~p, ~p.",
 		 [Rid, Rchan, Value]),
 	    {ok, Tref} = 
-		timer:send_after(100, {analog_input, Rid, Rchan, Value}),
+		erlang:send_after(100, self(), {analog_input, Rid, Rchan, Value}),
 	    [I#item {timer = Tref} | Is];
        true ->
 	    ?dbg(?SERVER,"analog_input: not analog item ~p, ~p, ignored.",

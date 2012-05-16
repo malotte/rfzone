@@ -1,3 +1,19 @@
+%%%---- BEGIN COPYRIGHT --------------------------------------------------------
+%%%
+%%% Copyright (C) 2007 - 2012, Rogvall Invest AB, <tony@rogvall.se>
+%%%
+%%% This software is licensed as described in the file COPYRIGHT, which
+%%% you should have received as part of this distribution. The terms
+%%% are also available at http://www.rogvall.se/docs/copyright.txt.
+%%%
+%%% You may opt to use, copy, modify, merge, publish, distribute and/or sell
+%%% copies of the Software, and permit persons to whom the Software is
+%%% furnished to do so, under the terms of the COPYRIGHT file.
+%%%
+%%% This software is distributed on an "AS IS" basis, WITHOUT WARRANTY OF ANY
+%%% KIND, either express or implied.
+%%%
+%%%---- END COPYRIGHT ----------------------------------------------------------
 %%%-------------------------------------------------------------------
 %%% @author Tony Rogvall <tony@rogvall.se>
 %%% @author Malotte Westman Lönne <malotte@malotte.net>
@@ -342,7 +358,7 @@ open(Ctx=#ctx {device = {DeviceName, Version}, retry_timer = RetryTimeout }) ->
 			E == enoent ->
 	    ?dbg(?SERVER,"open: Port could not be opened, will try again "
 		 "in ~p millisecs.\n", [RetryTimeout]),
-	    timer:send_after(RetryTimeout, retry),
+	    erlang:send_after(RetryTimeout, self(), retry),
 	    {ok, Ctx};
 	Error ->
 	    ?dbg(?SERVER,"open: Driver not started, reason = ~p.\n", 
@@ -419,7 +435,7 @@ command(F, Args, Ctx=#ctx {sl = SL}) when SL =/= undefined ->
 	    case send_command(SL, Command) of
 		ok ->
 		    %% Wait for confirmation
-		    {ok, TRef} = timer:send_after(5000, timeout),
+		    TRef = erlang:send_after(5000, timeout),
 		    {noreply,Ctx#ctx {command = Command, reply_timer = TRef}};
 		{simulated, ok} ->
 		    {reply, ok, Ctx};
@@ -490,7 +506,7 @@ handle_info({_Port, {data, Data}},
     ?dbg(?SERVER,"handle_info: port data ~p", [Data]),
 
     %% Reply from port
-    timer:cancel(TRef),
+    erlang:cancel_timer(TRef),
     NewReply = <<Reply/binary, Data/binary>>,
 
     %% To ensure quick feeadback
