@@ -435,7 +435,7 @@ command(F, Args, Ctx=#ctx {sl = SL}) when SL =/= undefined ->
 	    case send_command(SL, Command) of
 		ok ->
 		    %% Wait for confirmation
-		    TRef = erlang:send_after(5000, timeout),
+		    TRef = erlang:send_after(5000, self(), timeout),
 		    {noreply,Ctx#ctx {command = Command, reply_timer = TRef}};
 		{simulated, ok} ->
 		    {reply, ok, Ctx};

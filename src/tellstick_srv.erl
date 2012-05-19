@@ -231,13 +231,14 @@ init(Args) ->
     end.
 
 start_device(Args, Conf) ->
-    if Conf#conf.device =:= undefined ->
+    case Conf#conf.device of
+	{simulated, _Version} ->
 	    ?dbg(?SERVER,"init: Driver undefined, running simulated.", []),
 	    %% How handle ??
 	    {ok, _Pid} = tellstick_drv:start_link([{device,{simulated, ?DEF_VERSION}},
 						   {debug, get(dbg)}]),
 	    undefined;
-       true ->
+	_NotSimulated ->
 	    Device = Conf#conf.device,
 	    TOut = proplists:get_value(retry_timeout, Args, 1000),
 	    ?dbg(?SERVER,"init: Device = ~p.", [Device]),
@@ -767,7 +768,7 @@ digital_input(I, Nid, Is, Value) ->
 	    end,
 	    [I | Is];
        true ->
-	    ?dbg(?SERVER,"Not digital item.", []),
+	    ?dbg(?SERVER,"digital_input: not digital item.", []),
 	    [I | Is]
     end.
 
@@ -797,7 +798,7 @@ analog_input(I=#item {rid = Rid, rchan = Rchan, timer = Timer, flags = Flags},
 	    end,
 	    ?dbg(?SERVER,"analog_input: buffer call for ~.16#, ~p, ~p.",
 		 [Rid, Rchan, Value]),
-	    {ok, Tref} = 
+	    Tref = 
 		erlang:send_after(100, self(), {analog_input, Rid, Rchan, Value}),
 	    [I#item {timer = Tref} | Is];
        true ->

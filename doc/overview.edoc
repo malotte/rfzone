@@ -17,10 +17,15 @@ tellstick has support for the following remote control protocols:
 <li>risingsun</li>
 </ul>
 
-== User's Guide ==
-In order for tellstick to function the configuration file (default tellstick.conf) must contain the necessary information about the devices to configure.<br/>
-...
+== Installation ==
+Installation is described in the tellstick README at github:<br/>
+<a href="https://github.com/malotte/tellstick" target="_blank">README</a>
 
+== User's Guide ==
+User Guides can be found on the tellstick wiki at github: <br/>
+<a href="https://github.com/malotte/tellstick/wiki/howto_configure_tellstick" target="_blank">How to configure tellstick</a><br/>
+<a href="https://github.com/malotte/tellstick/wiki/howto_install_as_service" target="_blank">How to install tellstick as a service</a>
+ 
 == Implementation ==
 The tellstick application consists of:
 <ul>
