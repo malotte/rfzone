@@ -20,7 +20,7 @@ tellstick currently has support for the following remote control protocols:
 <li>ikea</li>
 <li>risingsun</li>
 </ul>
-
+For information on what protocol a specif brand uses see [Protocol - Brand Map](https://github.com/malotte/tellstick/wiki/Protocol---Brand-Map).<br/>
 ### Dependencies
 
 To build tellstick you will need a working installation of Erlang R15B (or
