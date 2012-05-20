@@ -201,33 +201,39 @@ init(Args) ->
 	undefined ->
 	    ?dbg(?SERVER,"init: No CANOpen node given.", []),
 	    {stop, no_co_node};
-	CoNode ->
-	    FileName = proplists:get_value(config, Args, "tellstick.conf"),
-	    ConfFile =  full_filename(FileName),
-	    ?dbg(?SERVER,"init: File = ~p", [ConfFile]),
+	CoNode = {name, _Name} ->
+	    conf(Args, CoNode);
+	CoId ->
+	    CoNode = {name, _Name} = co_api:get_option(CoId, name),
+	    conf(Args, CoNode)
+    end.
 
-	    case load_config(ConfFile) of
-		{ok, Conf} ->
-		    Device = start_device(Args, Conf),
-		    {ok, _Dict} = co_api:attach(CoNode),
-		    Nid = co_api:get_option(CoNode, id),
-		    subscribe(CoNode),
-		    case proplists:get_value(reset, Args, false) of
-			true -> reset_items(Conf#conf.items);
-			false -> do_nothing
-		    end,
-		    power_on(Nid, Conf#conf.items),
-		    process_flag(trap_exit, true),
-		    {ok, #ctx { co_node = CoNode, 
-				device = Device,
-				node_id = Nid, 
-				items=Conf#conf.items }};
-		Error ->
-		    ?dbg(?SERVER,
-			 "init: Not possible to load configuration file ~p.",
-			 [ConfFile]),
-		    {stop, Error}
-	    end
+conf(Args,CoNode) ->
+    FileName = proplists:get_value(config, Args, "tellstick.conf"),
+    ConfFile =  full_filename(FileName),
+    ?dbg(?SERVER,"init: File = ~p", [ConfFile]),
+
+    case load_config(ConfFile) of
+	{ok, Conf} ->
+	    Device = start_device(Args, Conf),
+	    {ok, _Dict} = co_api:attach(CoNode),
+	    Nid = co_api:get_option(CoNode, id),
+	    subscribe(CoNode),
+	    case proplists:get_value(reset, Args, false) of
+		true -> reset_items(Conf#conf.items);
+		false -> do_nothing
+	    end,
+	    power_on(Nid, Conf#conf.items),
+	    process_flag(trap_exit, true),
+	    {ok, #ctx { co_node = CoNode, 
+			device = Device,
+			node_id = Nid, 
+			items=Conf#conf.items }};
+	Error ->
+	    ?dbg(?SERVER,
+		 "init: Not possible to load configuration file ~p.",
+		 [ConfFile]),
+	    {stop, Error}
     end.
 
 start_device(Args, Conf) ->
@@ -390,7 +396,27 @@ handle_cast({extended_notify, _Index, Frame}, Ctx) ->
 	    ?dbg(?SERVER,"handle_cast: decode failed, reason ~p.",[_Reason]),
 	    {noreply, Ctx}
     end;
+
+handle_cast({name_change, OldName, NewName}, 
+	    Ctx=#ctx {co_node = {name, OldName}}) ->
+   ?dbg(?SERVER, "handle_cast: co_node name change from ~p to ~p.", 
+	 [OldName, NewName]),
+    {noreply, Ctx#ctx {co_node = {name, NewName}}};
+
+handle_cast({name_change, _OldName, _NewName}, Ctx) ->
+   ?dbg(?SERVER, "handle_cast: co_node name change from ~p to ~p, ignored.", 
+	 [_OldName, _NewName]),
+    {noreply, Ctx};
+
+handle_cast({nodeid_change, _TypeOfNid, _OldNid, _NewNid}, 
+	    Ctx=#ctx {co_node = CoNode}) ->
+   ?dbg(?SERVER, "handle_cast: co_node nodied ~p change from ~p to ~p.", 
+	[_TypeOfNid, _OldNid, _NewNid]),
+    Nid = co_api:get_option(CoNode, id),
+    {noreply, Ctx#ctx {node_id = {name, Nid}}};
+
 handle_cast(_Msg, Ctx) ->
+    ?dbg(?SERVER,"handle_cast: Unknown Msg ~p", [_Msg]),
     {noreply, Ctx}.
 
 %%--------------------------------------------------------------------
@@ -425,9 +451,11 @@ handle_info({analog_input, Rid, Rchan, Value},
 	    NewItems = exec_analog_input(Item,Nid,OtherItems,Value),
 	    {noreply, Ctx#ctx { items = NewItems }}
     end;
+
 handle_info({'EXIT', _Pid, co_node_terminated}, Ctx) ->
     ?dbg(?SERVER,"handle_info: co_node terminated.",[]),
-    {stop, co_node_terminated, Ctx};    
+    {stop, co_node_terminated, Ctx};   
+ 
 handle_info(_Info, Ctx) ->
     ?dbg(?SERVER,"handle_info: Unknown Info ~p", [_Info]),
     {noreply, Ctx}.
