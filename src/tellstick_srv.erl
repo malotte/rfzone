@@ -39,6 +39,8 @@
 	 stop/0]).
 -export([reload/0, 
 	 reload/1]).
+-export([analog_input/3,digital_input/3]).
+-export([item_config/2, config_item/3]).
 -export([action/4]).
 -export([power/2]).
 
@@ -147,6 +149,83 @@ start_link(Opts) ->
 stop() ->
     gen_server:call(?SERVER, stop).
 
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Returns an items configuration
+%% @end
+%%--------------------------------------------------------------------
+-spec item_config(RemoteId::integer(),
+		  Channel::integer()) -> 
+			 {ok, Item::tuple()} | 
+			 {error, Error::term()}.
+
+item_config(RemoteId, Channel) 
+  when is_integer(RemoteId) andalso
+       is_integer(Channel)  ->
+    gen_server:call(?SERVER, {item_config, RemoteId, Channel}).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Adds/Updates an item configuration
+%% @end
+%%--------------------------------------------------------------------
+-spec config_item(RemoteId::integer(),
+		  Channel::integer(),
+		 {Protocol::atom(), 
+		  Unit::term(), 
+		  DeviceChannel::term(),
+		  Flags::list(atom() | tuple())}) -> 
+			 ok | 
+			 {error, Error::term()}.
+
+config_item(RemoteId, Channel, {Type, Unit, DeviceChannel, Flags}) 
+  when is_integer(RemoteId) andalso
+       is_integer(Channel)  ->
+    Item = #item { rid=RemoteId, rchan=Channel, 
+		   type=Type, unit=Unit, 
+		   lchan=DeviceChannel, flags=Flags,
+		   active=false, level=0 },
+    case verify_item(Item) of
+	ok ->
+	    gen_server:call(?SERVER, {config_item, RemoteId, Channel, Item});
+	{nok, Reason} ->
+	    error_logger:error_msg("Inconsistent item ~p, could not be loaded\n", 
+				   [Item]),
+	    {error, Reason}
+    end.
+	    
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Executes the equivalance of an ?MSG_ANALOG
+%% @end
+%%--------------------------------------------------------------------
+-spec analog_input(RemoteId::integer(),
+		   Channel::integer(),
+		   Level::integer()) -> ok | {error, Error::term()}.
+
+analog_input(RemoteId, Channel, Level) 
+  when is_integer(RemoteId) andalso
+       is_integer(Channel) andalso
+       is_integer(Level) ->
+    gen_server:cast(?SERVER, {analog_input, RemoteId, Channel, Level}).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Executes the equivalance of an ?MSG_DIGTAL
+%% @end
+%%--------------------------------------------------------------------
+-spec digital_input(RemoteId::integer(),
+		    Channel::integer(),
+		    Action::on | off) -> ok | {error, Error::term()}.
+
+digital_input(RemoteId, Channel, Action) 
+  when is_integer(RemoteId) andalso
+       is_integer(Channel) andalso
+       (Action == on orelse Action == off) ->
+    gen_server:cast(?SERVER, {digital_input, RemoteId, Channel, 
+			      if Action == on -> 1; Action == off -> 0 end}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -376,6 +455,26 @@ handle_call({reload, File}, _From,
 	    {reply, Error, Ctx}
     end;
 
+handle_call({item_config, RemoteId, Channel} = X, _From, Ctx=#ctx {items = Items}) ->
+    ?dbg(?SERVER,"handle_call: received item_config req ~p.",[X]),
+    case take_item(RemoteId, Channel, Items) of
+	false ->
+	    {reply, {error, no_such_item}, Ctx};
+	{value,Item,_OtherItems} ->
+	    {reply, {ok, Item}, Ctx}
+    end;
+
+handle_call({config_item, RemoteId, Channel, NewItem} = X, _From, 
+	    Ctx=#ctx {items = Items}) ->
+    ?dbg(?SERVER,"handle_call: received config_item req ~p.",[X]),
+    case take_item(RemoteId, Channel, Items) of
+	false ->
+	    {reply, ok, Ctx=#ctx {items = [NewItem | Items]}};
+	{value,_OldItem,OtherItems} ->
+	    %% Save old items state/level etc??
+	    {reply, ok, #ctx {items = [NewItem | OtherItems]}}
+    end;
+
 handle_call({new_co_node, NewCoNode}, _From, Ctx=#ctx {co_node = NewCoNode}) ->
     %% No change
     {reply, ok, Ctx};
@@ -436,17 +535,25 @@ handle_cast({extended_notify, _Index, Frame}, Ctx) ->
 	    {noreply, Ctx}
     end;
 
-handle_cast({action, RemoteId, Action, Channel, Value} = A, Ctx) ->
-    ?dbg(?SERVER,"handle_cast: received action ~p.",[A]),
+handle_cast({analog_input, RemoteId, Channel, Value} = X, Ctx) ->
+    ?dbg(?SERVER,"handle_cast: received analog_input ~p.",[X]),
+    handle_notify({RemoteId, ?MSG_ANALOG, Channel, Value}, Ctx);
+
+handle_cast({digital_input, RemoteId, Channel, Value} = X, Ctx) ->
+    ?dbg(?SERVER,"handle_cast: received digital_input ~p.",[X]),
+    handle_notify({RemoteId, ?MSG_DIGITAL, Channel, Value}, Ctx);
+
+handle_cast({action, RemoteId, Action, Channel, Value} = X, Ctx) ->
+    ?dbg(?SERVER,"handle_cast: received action ~p.",[X]),
     handle_notify({RemoteId, Action, Channel, Value}, Ctx);
 
-handle_cast({power, RemoteId, ?MSG_POWER_ON} = P, Ctx) ->
-    ?dbg(?SERVER,"handle_cast: received power on ~p.",[P]),
+handle_cast({power, RemoteId, ?MSG_POWER_ON} = X, Ctx) ->
+    ?dbg(?SERVER,"handle_cast: received power on ~p.",[X]),
     remote_power_on(RemoteId, Ctx#ctx.node_id, Ctx#ctx.items),
     {noreply, Ctx};    
 
-handle_cast({power, RemoteId, ?MSG_POWER_OFF} = P, Ctx) ->
-    ?dbg(?SERVER,"handle_cast: received power off ~p.",[P]),
+handle_cast({power, RemoteId, ?MSG_POWER_OFF} = X, Ctx) ->
+    ?dbg(?SERVER,"handle_cast: received power off ~p.",[X]),
     remote_power_off(RemoteId, Ctx#ctx.node_id, Ctx#ctx.items),
     {noreply, Ctx};    
 
@@ -601,8 +708,10 @@ load_conf([C | Cs], Conf, Items) ->
 	    case verify_item(Item) of
 		ok ->
 		    load_conf(Cs, Conf, [Item | Items]);
-		nok ->
-		    error_logger:error_msg("Inconsistent item ~p, could not be loaded\n", [Item]),
+		{nok, Reason} ->
+		    error_logger:error_msg(
+		      "Inconsistent item ~p, could not be loaded, reason ~p\n", 
+		      [Item, Reason]),
 		    load_conf(Cs, Conf, Items)
 	    end;
 	{product,Product1} ->
@@ -635,11 +744,11 @@ verify_item(_I=#item {type = Type, unit = Unit, lchan = Channel, flags = Flags})
 	    case verify_channel_range(Type, Channel) of
 		ok ->
 		    verify_flags(Type, Flags);
-		nok ->
-		    nok
+		{nok, _Reason} = N->
+		    N
 	    end;
-	nok ->
-	    nok
+	{nok, _Reason} = N ->
+	    N
     end.
 
 verify_unit_range(nexa, Unit) 
@@ -667,7 +776,7 @@ verify_unit_range(risingsun, Unit)
 verify_unit_range(Type, Unit) ->
     ?dbg(?SERVER,"verify_unit_range: invalid type/unit combination ~p,~p", 
 		   [Type, Unit]),
-    nok.
+    {nok, invalid_type_unit_combination}.
 
 verify_channel_range(nexa, Channel) 
   when Channel >= 1,
@@ -696,7 +805,7 @@ verify_channel_range(risingsun, Channel)
 verify_channel_range(Type, Channel) ->
     ?dbg(?SERVER,"verify_channel_range: invalid type/channel combination ~p,~p", 
 		   [Type, Channel]),
-    nok.
+    {nok, invalid_type_channel_combination}.
 
 
 verify_flags(_Type, []) ->
@@ -738,7 +847,7 @@ verify_flags(nexax = Type, [{analog_max, Max} | Flags])
 verify_flags(Type, [Flag | _Flags]) ->
     ?dbg(?SERVER,"verify_flags: invalid type/flag combination ~p,~p", 
 		   [Type, Flag]),
-    nok.
+    {nok, invalid_type_flag_combination}.
 
 
 
@@ -790,13 +899,13 @@ handle_notify({RemoteId, Index, SubInd, Value}, Ctx) ->
 	{value,I,Is} ->
 	    case Index of
 		?MSG_DIGITAL ->
-		    Items = digital_input(I,Ctx#ctx.node_id,Is,Value),
+		    Items = digital_input_int(I,Ctx#ctx.node_id,Is,Value),
 		    {noreply, Ctx#ctx { items=Items }};
 		?MSG_ANALOG ->
-		    Items = analog_input(I,Is,Value),
+		    Items = analog_input_int(I,Is,Value),
 		    {noreply, Ctx#ctx { items=Items }};
 		?MSG_ENCODER ->
-		    Items = encoder_input(I,Ctx#ctx.node_id,Is,Value),
+		    Items = encoder_input_int(I,Ctx#ctx.node_id,Is,Value),
 		    {noreply, Ctx#ctx { items=Items }};
 		_ ->
 		    {noreply,Ctx}
@@ -832,7 +941,7 @@ remote_power_on(_Rid, _Nid, []) ->
 %%
 %% Digital input
 %%
-digital_input(I, Nid, Is, Value) ->
+digital_input_int(I, Nid, Is, Value) ->
     Digital    = proplists:get_bool(digital, I#item.flags),
     SpringBack = proplists:get_bool(springback, I#item.flags),
     if Digital, SpringBack, Value =:= 1 ->
@@ -842,14 +951,14 @@ digital_input(I, Nid, Is, Value) ->
 	    Active = Value =:= 1,
 	    digital_input_call(I, Nid, Is, Active);
        Digital ->
-	    ?dbg(?SERVER,"digital_input: No action.", []),
+	    ?dbg(?SERVER,"digital_input_int: No action.", []),
 	    case get(dbg) of
 		true -> print_item(I);
 		_Other -> do_nothing
 	    end,
 	    [I | Is];
        true ->
-	    ?dbg(?SERVER,"digital_input: not digital item.", []),
+	    ?dbg(?SERVER,"digital_input_int: not digital item.", []),
 	    [I | Is]
     end.
 
@@ -868,7 +977,7 @@ digital_input_call(I, Nid, Is, Active) ->
 	    [I | Is]
     end.
 
-analog_input(I=#item {rid = Rid, rchan = Rchan, timer = Timer, flags = Flags}, 
+analog_input_int(I=#item {rid = Rid, rchan = Rchan, timer = Timer, flags = Flags}, 
 	     Is, Value) ->
     Analog = proplists:get_bool(analog, Flags),
     if Analog ->
@@ -877,13 +986,13 @@ analog_input(I=#item {rid = Rid, rchan = Rchan, timer = Timer, flags = Flags},
 	       true ->
 		    do_nothing
 	    end,
-	    ?dbg(?SERVER,"analog_input: buffer call for ~.16#, ~p, ~p.",
+	    ?dbg(?SERVER,"analog_input_int: buffer call for ~.16#, ~p, ~p.",
 		 [Rid, Rchan, Value]),
 	    Tref = 
 		erlang:send_after(100, self(), {analog_input, Rid, Rchan, Value}),
 	    [I#item {timer = Tref} | Is];
        true ->
-	    ?dbg(?SERVER,"analog_input: not analog item ~p, ~p, ignored.",
+	    ?dbg(?SERVER,"analog_input_int: not analog item ~p, ~p, ignored.",
 		 [Rid, Rchan]),
 	    [I | Is]
     end.
@@ -933,8 +1042,8 @@ exec_analog_input(I=#item {type = Type, rchan = Rchan, flags = Flags,
 notify(Nid, Func, Ix, Si, Value) ->
     co_api:notify_from(Nid, Func, Ix, Si,co_codec:encode(Value, unsigned32)).
     
-encoder_input(_Nid, I, Is, _Value) ->
-    ?dbg(?SERVER,"encoder_input: Not implemented yet.",[]),
+encoder_input_int(_Nid, I, Is, _Value) ->
+    ?dbg(?SERVER,"encoder_input_int: Not implemented yet.",[]),
     [I|Is].
 
 call(Type, Args) ->	       
