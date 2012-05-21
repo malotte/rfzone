@@ -39,6 +39,8 @@
 	 stop/0]).
 -export([reload/0, 
 	 reload/1]).
+-export([action/4]).
+-export([power/2]).
 
 %% gen_server callbacks
 -export([init/1, 
@@ -145,6 +147,43 @@ start_link(Opts) ->
 stop() ->
     gen_server:call(?SERVER, stop).
 
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Executes the equivalance of an extended notify message.
+%% @end
+%%--------------------------------------------------------------------
+-spec action(RemoteId::integer(),
+	     Action::digital | analog | encoder,
+	     Channel::integer(),
+	     Value::integer() | on | off) -> ok | {error, Error::term()}.
+
+action(RemoteId, Action, Channel, Value) 
+  when is_integer(RemoteId) andalso
+       is_integer(Channel) andalso
+       (Value == on orelse Value == off) andalso
+       Action == digital  ->
+    gen_server:cast(?SERVER, {action, RemoteId, encode(Action), Channel, 
+			      if Value == on -> 1; Value == off -> 0 end});
+action(RemoteId, Action, Channel, Value) 
+  when is_integer(RemoteId) andalso
+       is_integer(Channel) andalso
+       is_integer(Value) andalso
+       (Action == analog orelse Action == encoder) ->
+    gen_server:cast(?SERVER, {action, RemoteId, encode(Action), Channel, Value}).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Executes the equivalance of an extended notify message.
+%% @end
+%%--------------------------------------------------------------------
+-spec power(RemoteId::integer(), Value:: on | off) -> ok | {error, Error::term()}.
+
+power(RemoteId, Value)
+  when is_integer(RemoteId) andalso
+       (Value == on orelse Value == off) ->
+    gen_server:cast(?SERVER, {power, RemoteId, encode(Value)}).
+    
 %%--------------------------------------------------------------------
 %% @doc
 %% Reloads the default configuration file (tellstick.conf) from the 
@@ -385,17 +424,31 @@ handle_call(_Request, _From, Ctx) ->
 handle_cast({extended_notify, _Index, Frame}, Ctx) ->
     ?dbg(?SERVER,"handle_cast: received notify with frame ~w.",[Frame]),
     %% Check index ??
-    COBID = ?CANID_TO_COBID(Frame#can_frame.id),
+    RemoteId = ?CANID_TO_COBID(Frame#can_frame.id),
     <<_F:1, _Addr:7, Ix:16/little, Si:8, Data:4/binary>> = Frame#can_frame.data,
     ?dbg(?SERVER,"handle_cast: index = ~.16.0#:~w, data = ~w.",[Ix, Si, Data]),
     try co_codec:decode(Data, unsigned32) of
 	{Value, _Rest} ->
-	    handle_notify({COBID, Ix, Si, Value}, Ctx)
+	    handle_notify({RemoteId, Ix, Si, Value}, Ctx)
     catch
 	error:_Reason ->
 	    ?dbg(?SERVER,"handle_cast: decode failed, reason ~p.",[_Reason]),
 	    {noreply, Ctx}
     end;
+
+handle_cast({action, RemoteId, Action, Channel, Value} = A, Ctx) ->
+    ?dbg(?SERVER,"handle_cast: received action ~p.",[A]),
+    handle_notify({RemoteId, Action, Channel, Value}, Ctx);
+
+handle_cast({power, RemoteId, ?MSG_POWER_ON} = P, Ctx) ->
+    ?dbg(?SERVER,"handle_cast: received power on ~p.",[P]),
+    remote_power_on(RemoteId, Ctx#ctx.node_id, Ctx#ctx.items),
+    {noreply, Ctx};    
+
+handle_cast({power, RemoteId, ?MSG_POWER_OFF} = P, Ctx) ->
+    ?dbg(?SERVER,"handle_cast: received power off ~p.",[P]),
+    remote_power_off(RemoteId, Ctx#ctx.node_id, Ctx#ctx.items),
+    {noreply, Ctx};    
 
 handle_cast({name_change, OldName, NewName}, 
 	    Ctx=#ctx {co_node = {name, OldName}}) ->
@@ -917,3 +970,9 @@ print_flags([Flag | Tail]) ->
     print_flags(Tail).
     
   
+encode(on) -> ?MSG_POWER_ON;
+encode(off) -> ?MSG_POWER_OFF;
+encode(digital) -> ?MSG_DIGITAL;
+encode(analog) -> ?MSG_ANALOG;
+encode(encoder) -> ?MSG_ENCODER.
+     
