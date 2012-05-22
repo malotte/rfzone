@@ -26,6 +26,7 @@
 -module(tellstick_sup).
 
 -behaviour(supervisor).
+-include_lib("bert/src/bert.hrl").
 
 %% API
 -export([start_link/1, stop/1]).
@@ -80,6 +81,7 @@ init(TArgs) ->
     I = tellstick_srv,
     Opts = proplists:get_value(options, TArgs, []),	    
     Tellstick = {I, {I, start_link, [Opts]}, permanent, 5000, worker, [I]},
+ 
     error_logger:info_msg("~p: About to start ~p\n", [?MODULE,Tellstick]),
     {ok, { {one_for_one, 0, 300}, [Tellstick]} }.
 

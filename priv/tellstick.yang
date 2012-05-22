@@ -314,7 +314,14 @@ module tellstick {
 	  type uint32;
 	}
 	leaf action {
-	  type on-off;
+	  type union {
+	    type on-off;
+	    type enumeration {
+	      enum onoff {
+		description "Springback = on and off";
+	      }
+	    }
+	  }
 	}
       }
     }

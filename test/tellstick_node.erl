@@ -72,17 +72,20 @@ start() ->
 				     [{linked, false},
 				      {name, co_tellstick},
 				      {use_serial_as_xnodeid, true},
+				      {nmt_role, autonomous},
 				      {max_blksize, 7},
 				      {vendor,?SEAZONE},
 				      {debug, true}]),
-    co_api:state(Serial, operational).
+    
+    {ok, _BPid} = bert_rpc_exec:start().
 
 stop() ->
     Serial = serial(),
     co_api:stop(Serial),
     co_proc:stop(),
     can_udp:stop(tellstick_test),
-    can_router:stop().
+    can_router:stop(),
+    io:format("Stop bert server manually\n",[]).
 
 start_tellstick() ->
     tellstick_srv:start_link([{linked, false},

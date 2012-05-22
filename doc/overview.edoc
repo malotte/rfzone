@@ -17,8 +17,10 @@ tellstick has support for the following remote control protocols:
 <li>risingsun</li>
 </ul>
 
+For a mapping between these protocols and brands see: <a href="https://github.com/malotte/tellstick/wiki/Protocol---Brand-Map" target="_blank">Protocol - Brand Map</a>
+
 == Installation ==
-Installation is described in the tellstick README at github:<br/>
+Installation is described in the tellstick README at github: 
 <a href="https://github.com/malotte/tellstick" target="_blank">README</a>
 
 == User's Guide ==

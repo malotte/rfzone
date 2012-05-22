@@ -40,7 +40,8 @@
 -export([reload/0, 
 	 reload/1]).
 -export([analog_input/3,digital_input/3]).
--export([item_config/2, config_item/3]).
+-export([item_configuration/2, configure_item/3]).
+-export([device_configuration/0, configure_device/1]).
 -export([action/4]).
 -export([power/2]).
 
@@ -73,7 +74,6 @@
 	{
 	  product,
 	  device = {simulated, ?DEF_VERSION},
-	  version,
 	  items
 	}).
 
@@ -155,47 +155,81 @@ stop() ->
 %% Returns an items configuration
 %% @end
 %%--------------------------------------------------------------------
--spec item_config(RemoteId::integer(),
-		  Channel::integer()) -> 
-			 {ok, Item::tuple()} | 
-			 {error, Error::term()}.
+-spec item_configuration(RemoteId::integer(),
+			 Channel::integer()) -> 
+				{ok, Item::list(tuple())} | 
+				{error, Error::term()}.
 
-item_config(RemoteId, Channel) 
+item_configuration(RemoteId, Channel) 
   when is_integer(RemoteId) andalso
        is_integer(Channel)  ->
-    gen_server:call(?SERVER, {item_config, RemoteId, Channel}).
+    gen_server:call(?SERVER, {item_configuration, RemoteId, Channel}).
 
 %%--------------------------------------------------------------------
 %% @doc
 %% Adds/Updates an item configuration
 %% @end
 %%--------------------------------------------------------------------
--spec config_item(RemoteId::integer(),
-		  Channel::integer(),
-		 {Protocol::atom(), 
-		  Unit::term(), 
-		  DeviceChannel::term(),
-		  Flags::list(atom() | tuple())}) -> 
-			 ok | 
-			 {error, Error::term()}.
+-spec configure_item(RemoteId::tuple(),
+		     Channel::tuple(),
+		     list(tuple())) -> 
+			    ok | 
+			    {error, Error::term()}.
 
-config_item(RemoteId, Channel, {Type, Unit, DeviceChannel, Flags}) 
-  when is_integer(RemoteId) andalso
-       is_integer(Channel)  ->
-    Item = #item { rid=RemoteId, rchan=Channel, 
-		   type=Type, unit=Unit, 
-		   lchan=DeviceChannel, flags=Flags,
-		   active=false, level=0 },
-    case verify_item(Item) of
-	ok ->
-	    gen_server:call(?SERVER, {config_item, RemoteId, Channel, Item});
-	{nok, Reason} ->
-	    error_logger:error_msg("Inconsistent item ~p, could not be loaded\n", 
-				   [Item]),
-	    {error, Reason}
+configure_item({'remote-id', RidList}, {'remote-channel', Channel}, Config) 
+  when is_list(RidList) andalso is_integer(Channel) ->
+    case remote_id(RidList, undefined) of
+	error ->
+	    {error, illegal_remote_id};
+	RemoteId ->
+	    gen_server:call(?SERVER, {configure_item, RemoteId, Channel, Config})
     end.
 	    
+remote_id([], RemoteId) -> 
+    RemoteId;
+remote_id([{'type-of-cobid', xcobid} | Rest], RemoteId) -> 
+    remote_id(Rest, RemoteId); 
+remote_id([{'function-code', pdo1_tx} | Rest], RemoteId) -> 
+    remote_id(Rest, RemoteId);
+remote_id([{'remote-node-id', RemoteId} | Rest], undefined) 
+  when is_integer(RemoteId) -> 
+    remote_id(Rest, RemoteId);
+remote_id(_Other, _RemoteId) -> 
+    error.
 
+%%--------------------------------------------------------------------
+%% @doc
+%% Returns the device configuration
+%% @end
+%%--------------------------------------------------------------------
+-spec device_configuration() -> 
+				  {ok, Item::list(tuple())} | 
+				  {error, Error::term()}.
+
+device_configuration() ->
+    gen_server:call(?SERVER, device_configuration).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Sets the device configuration
+%% @end
+%%--------------------------------------------------------------------
+-spec configure_device(Config::list(tuple())) -> 
+			      ok | 
+			      {error, Error::term()}.
+
+configure_device(Config) when is_list(Config) ->
+    case proplists:get_value('tellstick-device', Config) of
+	undefined ->
+	    {error, no_device_given};
+	DevName when is_list(DevName) orelse DevName == simulated -> 
+	    case proplists:get_value(version, Config, v1) of
+		Version when Version == v1 orelse Version == v2 ->
+		    gen_server:call(?SERVER, {configure_device, {DevName, Version}});
+		_Illegal ->
+		    {error, illegal_version}
+	    end
+    end.
 %%--------------------------------------------------------------------
 %% @doc
 %% Executes the equivalance of an ?MSG_ANALOG
@@ -225,7 +259,12 @@ digital_input(RemoteId, Channel, Action)
        is_integer(Channel) andalso
        (Action == on orelse Action == off) ->
     gen_server:cast(?SERVER, {digital_input, RemoteId, Channel, 
-			      if Action == on -> 1; Action == off -> 0 end}).
+			      if Action == on -> 1; Action == off -> 0 end});
+digital_input(RemoteId, Channel, Action) 
+  when is_integer(RemoteId) andalso
+       is_integer(Channel) andalso
+       Action == onoff -> %% Springback
+    gen_server:cast(?SERVER, {digital_input, RemoteId, Channel, 1}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -455,25 +494,47 @@ handle_call({reload, File}, _From,
 	    {reply, Error, Ctx}
     end;
 
-handle_call({item_config, RemoteId, Channel} = X, _From, Ctx=#ctx {items = Items}) ->
-    ?dbg(?SERVER,"handle_call: received item_config req ~p.",[X]),
+handle_call({item_configuration, RemoteId, Channel} = X, _From, 
+	    Ctx=#ctx {items = Items}) ->
+    ?dbg(?SERVER,"handle_call: received item_configuration req ~p.",[X]),
     case take_item(RemoteId, Channel, Items) of
 	false ->
 	    {reply, {error, no_such_item}, Ctx};
 	{value,Item,_OtherItems} ->
-	    {reply, {ok, Item}, Ctx}
+	    {reply, {ok, format(Item)}, Ctx}
     end;
 
-handle_call({config_item, RemoteId, Channel, NewItem} = X, _From, 
+handle_call({configure_item, RemoteId, Channel, Config} = X, _From, 
 	    Ctx=#ctx {items = Items}) ->
-    ?dbg(?SERVER,"handle_call: received config_item req ~p.",[X]),
+    ?dbg(?SERVER,"handle_call: received configure_item req ~p.",[X]),
     case take_item(RemoteId, Channel, Items) of
 	false ->
-	    {reply, ok, Ctx=#ctx {items = [NewItem | Items]}};
-	{value,_OldItem,OtherItems} ->
-	    %% Save old items state/level etc??
-	    {reply, ok, #ctx {items = [NewItem | OtherItems]}}
+	    NewItem = item(Config, #item {rid = RemoteId, rchan = Channel}),
+	    case verify_item(NewItem) of
+		ok ->
+		    {reply, ok, Ctx=#ctx {items = [NewItem | Items]}};
+		{nok, Reason} ->
+		    {reply, {error, Reason}, Ctx}
+	    end;
+	{value,OldItem,OtherItems} ->
+	    NewItem = item(Config, OldItem),
+	    {reply, ok, Ctx#ctx {items = [NewItem | OtherItems]}}
     end;
+
+handle_call(device_configuration, _From, 
+	    Ctx=#ctx {device = Device}) ->
+    ?dbg(?SERVER,"handle_call: received device_configuration req.",[]),
+    {reply, {ok, format(Device)}, Ctx};
+
+handle_call({configure_device, NewDevice} = X, _From, 
+	    Ctx=#ctx {device = OldDevice}) ->
+    ?dbg(?SERVER,"handle_call: received configure_device req ~p.",[X]),
+    if NewDevice =/= OldDevice ->
+	    tellstick_drv:change_device(NewDevice);
+       true ->
+	    do_nothing
+    end,
+    {reply, ok, Ctx#ctx {device = NewDevice}};
 
 handle_call({new_co_node, NewCoNode}, _From, Ctx=#ctx {co_node = NewCoNode}) ->
     %% No change
@@ -850,7 +911,6 @@ verify_flags(Type, [Flag | _Flags]) ->
     {nok, invalid_type_flag_combination}.
 
 
-
 translate({xcobid, Func, Nid}) ->
     ?XCOB_ID(co_lib:encode_func(Func), Nid);
 translate({cobid, Func, Nid}) ->
@@ -1084,4 +1144,71 @@ encode(off) -> ?MSG_POWER_OFF;
 encode(digital) -> ?MSG_DIGITAL;
 encode(analog) -> ?MSG_ANALOG;
 encode(encoder) -> ?MSG_ENCODER.
+     
+item([], Item) ->
+    Item;
+item([{'remote-id', _Channel} | Rest], Item) ->
+    %% Already stored
+    item(Rest, Item);
+item([{'remote-channel', _Channel} | Rest], Item) ->
+    %% Already stored
+    item(Rest, Item);
+item([{protocol, Type} | Rest], Item) ->
+    item(Rest, Item#item {type = Type});
+item([{unit, Unit} | Rest], Item) ->
+    item(Rest, Item#item {unit = Unit});
+item([{channel, DevChannel} | Rest], Item) ->
+    item(Rest, Item#item {lchan = DevChannel});
+item([{flags, Flags} | Rest], Item) ->
+    case flags(Flags, []) of
+	error ->
+	    error;
+	F ->
+	    item(Rest, Item#item {flags = F})
+    end;
+item(_Other,_Item) ->
+    error.
+
+flags([], Flags) ->
+    Flags;
+flags([{Flag, true} | Rest], Flags) ->
+    flags(Rest, [Flag | Flags]);
+flags([{_Flag, false} | Rest], Flags) ->
+    flags(Rest, Flags);
+flags([{_Key, _Value} = Flag | Rest], Flags) ->
+    flags(Rest, [Flag | Flags]);
+flags(_Other, _Flags) ->
+    error.
+    
+
+format({simulated, _Version}) ->
+    [{'tellstick-device', simulated}];
+format({Device, Version}) ->
+    [{'tellstick-device', Device}, {version, Version}];
+format(_I=#item{rid = RemoteId, rchan = RChannel, active = Active, type = Type,
+		unit = Unit, lchan = DeviceChannel, flags = Flags, level = Level}) ->
+    Common = [{'remote-id', 
+	       [{'type-of-cobid', xcobid},
+		{'function-code',pdo1_tx},
+		{'remote-node-id', RemoteId}]},
+	      {'remote-channel', RChannel},
+	      {state, if Active == true -> on; Active == false -> off end},
+	      {protocol, Type},
+	      {channel, DeviceChannel},
+	      {flags, format(Flags,[])}],
+    DevChan = if Type == sartano -> []; true -> [{unit, Unit}] end,
+    Lev = case lists:member(analog, Flags) of
+	      false -> [];
+	      true -> [{level, Level}]
+	  end,
+    Common ++ DevChan ++ Lev.
+format([], Acc) -> Acc;
+format([{_Key, _Value} = Flag | Rest], Acc) -> 
+    format(Rest, [Flag | Acc]);
+format([Key | Rest], Acc) -> 
+    format(Rest, [{Key, true} | Acc]).
+		      
+		 
+		       
+		     
      
