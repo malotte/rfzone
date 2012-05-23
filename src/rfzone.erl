@@ -18,13 +18,13 @@
 %%% @author Tony Rogvall <tony@rogvall.se>
 %%% @copyright (C) 2010, Tony Rogvall
 %%% @doc
-%%%    Tellstick control application.
+%%%    rfZone control application.
 %%%    For detailed description of the functionality see the overview.
 %%%
 %%% Created :  5 Jul 2010 by Tony Rogvall
 %%% @end
 %%%-------------------------------------------------------------------
--module(tellstick).
+-module(rfzone).
 
 -behaviour(application).
 
@@ -62,7 +62,7 @@ start(_StartType, _StartArgs) ->
 	       {ok, O} -> O
 	   end,
     Args = [{options, Opts}],
-    tellstick_sup:start_link(Args).
+    rfzone_sup:start_link(Args).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -80,4 +80,4 @@ start() ->
     application:start(sl),
     application:start(can),
     application:start(canopen),
-    application:start(tellstick).
+    application:start(rfzone).

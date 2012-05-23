@@ -1,10 +1,10 @@
 #
-# Make the tellstick test modules
+# Make the rfZone test modules
 #
 
 MODULES = \
-	tellstick_node \
-	tellstick_SUITE
+	rfzone_node \
+	rfzone_SUITE
 
 
 EBIN = .

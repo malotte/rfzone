@@ -5,7 +5,7 @@
 <plist version="1.0">
   <dict>
     <key>Label</key>
-    <string>se.seazone.tellstick</string>
+    <string>se.seazone.rfzone</string>
     <key>EnvironmentVariables</key>
     <dict>
       <key>DYLD_LIBRARY_PATH</key>
@@ -19,11 +19,11 @@
       <string>+Bd</string>
       <string>-noinput</string>
       <string>-config</string>
-      <string>/Users/%USER%/erlang/tellstick/sys</string>
+      <string>/Users/%USER%/erlang/rfzone/sys</string>
       <string>-sname</string>
       <string>telld</string>
       <string>-s</string>
-      <string>tellstick</string>
+      <string>rfzone</string>
     </array>
     <key>UserName</key>
     <string>%USER%</string>

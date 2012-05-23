@@ -18,7 +18,7 @@
 %%  start wrapper
 %%
 %% @hidden
--module(tellstick_node).
+-module(rfzone_node).
 
 %% Note: This directive should only be used in test suites.
 -compile(export_all).
@@ -26,7 +26,7 @@
 -define(SEAZONE, 16#2A1).
 
 serial_os_env() ->
-    case os:getenv("TELLSTICK_CO_SERIAL") of
+    case os:getenv("RFZONE_CO_SERIAL") of
 	false ->  not_found;
 	"0x"++SerX -> erlang:list_to_integer(SerX, 16);
 	Ser -> erlang:list_to_integer(Ser, 10)
@@ -49,7 +49,7 @@ serial() ->
 init() ->
     Serial = serial(),
     can_router:start(),
-    can_udp:start(tellstick_test, 0),
+    can_udp:start(rfzone_test, 0),
     {ok, _PPid} = co_proc:start_link([{linked, false}]),
     {ok, _NPid} = co_api:start_link(Serial, 
 				    [{linked, false},
@@ -64,11 +64,11 @@ init() ->
 start() ->
     Serial = serial(),
     can_router:start(),
-    can_udp:start(tellstick_test, 0),
+    can_udp:start(rfzone_test, 0),
     {ok, _PPid} = co_proc:start_link([{linked, false}]),
     {ok, _NPid} = co_api:start_link(Serial, 
 				     [{linked, false},
-				      {name, co_tellstick},
+				      {name, co_rfzone},
 				      {dict, saved},
 				      {use_serial_as_xnodeid, true},
 				      {nmt_role, autonomous},
@@ -82,18 +82,18 @@ stop() ->
     Serial = serial(),
     co_api:stop(Serial),
     co_proc:stop(),
-    can_udp:stop(tellstick_test),
+    can_udp:stop(rfzone_test),
     can_router:stop(),
     io:format("Stop bert server manually\n",[]).
 
-start_tellstick() ->
+start_rfzone() ->
     {ok, _TPid} = 
-	tellstick_srv:start_link([{linked, false},
-				  {retry_timeout, 5000}, 
-				  {debug, true},
-				  {config, "/Users/malotte/erlang/tellstick/test/tellstick_SUITE_data/tellstick.conf"},
-				  {co_node, serial()}]).
+	rfzone_srv:start_link([{linked, false},
+			       {retry_timeout, 5000}, 
+			       {debug, true},
+			       {config, "/Users/malotte/erlang/rfzone/test/rfzone_SUITE_data/rfzone.conf"},
+			       {co_node, serial()}]).
    
 
-stop_tellstick() ->
-    tellstick_srv:stop().
+stop_rfzone() ->
+    rfzone_srv:stop().

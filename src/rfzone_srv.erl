@@ -19,13 +19,13 @@
 %%% @author Malotte Westman Lönne <malotte@malotte.net>
 %%% @copyright (C) 2012, Tony Rogvall
 %%% @doc
-%%%    Tellstick control server.
+%%%    rfZone control server.
 %%%    For detailed description of the functionality see the overview.
 %%%
 %%% Created:  5 Jul 2010 by Tony Rogvall 
 %%% @end
 %%%-------------------------------------------------------------------
--module(tellstick_srv).
+-module(rfzone_srv).
 
 -behaviour(gen_server).
 
@@ -66,10 +66,10 @@
 		  {{?MSG_ANALOG, 0}, ?INTEGER, 0},
 		  {{?MSG_ENCODER, 0}, ?INTEGER, 0}]).
 
-%% Default tellstick version
+%% Default rfzone version
 -define(DEF_VERSION, v1).
 
-%% Tellstick configuration from file
+%% rfZone configuration from file
 -record(conf,
 	{
 	  product,
@@ -304,14 +304,14 @@ power(RemoteId, Value)
     
 %%--------------------------------------------------------------------
 %% @doc
-%% Reloads the default configuration file (tellstick.conf) from the 
+%% Reloads the default configuration file (rfzone.conf) from the 
 %% default location (the applications priv-dir).
 %% @end
 %%--------------------------------------------------------------------
 -spec reload() -> ok | {error, Error::term()}.
 
 reload() ->
-    File = filename:join(code:priv_dir(tellstick), "tellstick.conf"),
+    File = filename:join(code:priv_dir(rfzone), "rfzone.conf"),
     gen_server:call(?SERVER, {reload, File}).
 
 %%--------------------------------------------------------------------
@@ -366,7 +366,7 @@ init(Args) ->
     end.
 
 conf(Args,CoNode) ->
-    FileName = proplists:get_value(config, Args, "tellstick.conf"),
+    FileName = proplists:get_value(config, Args, "rfzone.conf"),
     ConfFile =  full_filename(FileName),
     ?dbg(?SERVER,"init: File = ~p", [ConfFile]),
 
@@ -493,9 +493,9 @@ handle_call({reload, File}, _From,
 	    {reply, Error, Ctx}
     end;
 
-handle_call({item_configuration, RemoteId, Channel} = X, _From, 
+handle_call({item_configuration, RemoteId, Channel} = _X, _From, 
 	    Ctx=#ctx {items = Items}) ->
-    ?dbg(?SERVER,"handle_call: received item_configuration req ~p.",[X]),
+    ?dbg(?SERVER,"handle_call: received item_configuration req ~p.",[_X]),
     case take_item(RemoteId, Channel, Items) of
 	false ->
 	    {reply, {error, no_such_item}, Ctx};
@@ -503,9 +503,9 @@ handle_call({item_configuration, RemoteId, Channel} = X, _From,
 	    {reply, {ok, format(Item)}, Ctx}
     end;
 
-handle_call({configure_item, RemoteId, Channel, Config} = X, _From, 
+handle_call({configure_item, RemoteId, Channel, Config} = _X, _From, 
 	    Ctx=#ctx {items = Items}) ->
-    ?dbg(?SERVER,"handle_call: received configure_item req ~p.",[X]),
+    ?dbg(?SERVER,"handle_call: received configure_item req ~p.",[_X]),
     case take_item(RemoteId, Channel, Items) of
 	false ->
 	    NewItem = item(Config, #item {rid = RemoteId, rchan = Channel}),
@@ -525,9 +525,9 @@ handle_call(device_configuration, _From,
     ?dbg(?SERVER,"handle_call: received device_configuration req.",[]),
     {reply, {ok, format(Device)}, Ctx};
 
-handle_call({configure_device, NewDevice} = X, _From, 
+handle_call({configure_device, NewDevice} = _X, _From, 
 	    Ctx=#ctx {device = OldDevice}) ->
-    ?dbg(?SERVER,"handle_call: received configure_device req ~p.",[X]),
+    ?dbg(?SERVER,"handle_call: received configure_device req ~p.",[_X]),
     if NewDevice =/= OldDevice ->
 	    tellstick_drv:change_device(NewDevice);
        true ->
@@ -595,25 +595,25 @@ handle_cast({extended_notify, _Index, Frame}, Ctx) ->
 	    {noreply, Ctx}
     end;
 
-handle_cast({analog_input, RemoteId, Channel, Value} = X, Ctx) ->
-    ?dbg(?SERVER,"handle_cast: received analog_input ~p.",[X]),
+handle_cast({analog_input, RemoteId, Channel, Value} = _X, Ctx) ->
+    ?dbg(?SERVER,"handle_cast: received analog_input ~p.",[_X]),
     handle_notify({RemoteId, ?MSG_ANALOG, Channel, Value}, Ctx);
 
-handle_cast({digital_input, RemoteId, Channel, Value} = X, Ctx) ->
-    ?dbg(?SERVER,"handle_cast: received digital_input ~p.",[X]),
+handle_cast({digital_input, RemoteId, Channel, Value} = _X, Ctx) ->
+    ?dbg(?SERVER,"handle_cast: received digital_input ~p.",[_X]),
     handle_notify({RemoteId, ?MSG_DIGITAL, Channel, Value}, Ctx);
 
-handle_cast({action, RemoteId, Action, Channel, Value} = X, Ctx) ->
-    ?dbg(?SERVER,"handle_cast: received action ~p.",[X]),
+handle_cast({action, RemoteId, Action, Channel, Value} = _X, Ctx) ->
+    ?dbg(?SERVER,"handle_cast: received action ~p.",[_X]),
     handle_notify({RemoteId, Action, Channel, Value}, Ctx);
 
-handle_cast({power, RemoteId, ?MSG_POWER_ON} = X, Ctx) ->
-    ?dbg(?SERVER,"handle_cast: received power on ~p.",[X]),
+handle_cast({power, RemoteId, ?MSG_POWER_ON} = _X, Ctx) ->
+    ?dbg(?SERVER,"handle_cast: received power on ~p.",[_X]),
     remote_power_on(RemoteId, Ctx#ctx.node_id, Ctx#ctx.items),
     {noreply, Ctx};    
 
-handle_cast({power, RemoteId, ?MSG_POWER_OFF} = X, Ctx) ->
-    ?dbg(?SERVER,"handle_cast: received power off ~p.",[X]),
+handle_cast({power, RemoteId, ?MSG_POWER_OFF} = _X, Ctx) ->
+    ?dbg(?SERVER,"handle_cast: received power off ~p.",[_X]),
     remote_power_off(RemoteId, Ctx#ctx.node_id, Ctx#ctx.items),
     {noreply, Ctx};    
 
@@ -721,7 +721,7 @@ code_change(_OldVsn, Ctx, _Extra) ->
 full_filename(FileName) ->
     case filename:dirname(FileName) of
 	"." when hd(FileName) =/= $. ->
-	    filename:join(code:priv_dir(tellstick), FileName);
+	    filename:join(code:priv_dir(rfzone), FileName);
 	_ -> 
 	    FileName
     end.
@@ -839,9 +839,9 @@ verify_unit_range(risingsun, Unit)
   when Unit >= 1,
        Unit =< 4 ->
     ok;
-verify_unit_range(Type, Unit) ->
+verify_unit_range(_Type, _Unit) ->
     ?dbg(?SERVER,"verify_unit_range: invalid type/unit combination ~p,~p", 
-		   [Type, Unit]),
+		   [_Type, _Unit]),
     {error, invalid_type_unit_combination}.
 
 verify_channel_range(nexa, Channel) 
@@ -868,9 +868,9 @@ verify_channel_range(risingsun, Channel)
   when Channel >= 1,
        Channel =< 4 ->
     ok;
-verify_channel_range(Type, Channel) ->
+verify_channel_range(_Type, _Channel) ->
     ?dbg(?SERVER,"verify_channel_range: invalid type/channel combination ~p,~p", 
-		   [Type, Channel]),
+		   [_Type, _Channel]),
     {error, invalid_type_channel_combination}.
 
 
@@ -910,11 +910,10 @@ verify_flags(nexax = Type, [{analog_min, Min} | Flags])
 verify_flags(nexax = Type, [{analog_max, Max} | Flags]) 
   when Max >= 0, Max =< 255 ->
     verify_flags(Type, Flags);
-verify_flags(Type, [Flag | _Flags]) ->
+verify_flags(_Type, [_Flag | _Flags]) ->
     ?dbg(?SERVER,"verify_flags: invalid type/flag combination ~p,~p", 
-		   [Type, Flag]),
+		   [_Type, _Flag]),
     {error, invalid_type_flag_combination}.
-
 
 translate({xcobid, Func, Nid}) ->
     ?XCOB_ID(co_lib:encode_func(Func), Nid);
@@ -940,7 +939,7 @@ reset_items(Items) ->
       fun(I) ->
 	      ?dbg(?SERVER,"reset_items: resetting ~p, ~p, ~p", 
 		   [I#item.type,I#item.unit,I#item.lchan]),
-	      %% timer:sleep(1000), %% Otherwise tellstick chokes ..
+	      %% timer:sleep(1000), %% Otherwise rfzone chokes ..
 	      Analog = proplists:get_bool(analog, I#item.flags),
 	      Digital = proplists:get_bool(digital, I#item.flags),
 	      if Digital ->
@@ -1191,7 +1190,6 @@ flags([{_Key, _Value} = Flag | Rest], Flags) ->
     flags(Rest, [Flag | Flags]);
 flags(_Other, _Flags) ->
     error.
-    
 
 format({simulated, _Version}) ->
     [{'tellstick-device', simulated}];

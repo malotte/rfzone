@@ -22,7 +22,7 @@
 %%% Created : 10 Apr 2012 by Malotte Westman Lönne
 %%% @end
 %%%-------------------------------------------------------------------
--module(tellstick_SUITE).
+-module(rfzone_SUITE).
 
 -compile(export_all).
 
@@ -45,7 +45,7 @@ suite() ->
 %% @end
 %%--------------------------------------------------------------------
 all() -> 
-    [start_tellstick,
+    [start_rfzone,
      turn_on_off].
 
 %%--------------------------------------------------------------------
@@ -56,8 +56,8 @@ all() ->
 %% @end
 %%--------------------------------------------------------------------
 init_per_suite(Config) ->
-    tellstick_node:init(),
-    tellstick_node:start(),
+    rfzone_node:init(),
+    rfzone_node:start(),
     Config.
 
 %%--------------------------------------------------------------------
@@ -66,7 +66,7 @@ init_per_suite(Config) ->
 %% @end
 %%--------------------------------------------------------------------
 end_per_suite(_Config) ->
-    tellstick_node:stop(),
+    rfzone_node:stop(),
     ok.
 
 
@@ -81,12 +81,12 @@ end_per_suite(_Config) ->
 init_per_testcase(_TestCase, Config) ->
     ct:pal("Testcase: ~p", [_TestCase]),
     ConfFile = filename:join(?config(data_dir, Config), ct:get_config(conf)),
-    tellstick_srv:start_link([{debug, true}, 
+    rfzone_srv:start_link([{debug, true}, 
 			      {linked, false},
 			      {reset, true},
-			      {co_node, tellstick_node:serial()},
+			      {co_node, rfzone_node:serial()},
 			      {config, ConfFile}]),
-    %% Give tellstick time to reset
+    %% Give rfzone time to reset
     Config.
 
 %%--------------------------------------------------------------------
@@ -98,15 +98,15 @@ init_per_testcase(_TestCase, Config) ->
 %% @end
 %%--------------------------------------------------------------------
 end_per_testcase(_TestCase, _Config) ->
-    tellstick_srv:stop(),
+    rfzone_srv:stop(),
     ok.
 
 
 %%--------------------------------------------------------------------
-%% @spec start_tellstick() -> ok
+%% @spec start_rfzone() -> ok
 %% @end
 %%--------------------------------------------------------------------
-start_tellstick(_Config) -> 
+start_rfzone(_Config) -> 
     %% Done in init_per_testcase()
     timer:sleep(200),
     ok.
@@ -158,4 +158,4 @@ break(Config) ->
 
 
 serial() ->
-    tellstick_node:serial(). 
+    rfzone_node:serial(). 

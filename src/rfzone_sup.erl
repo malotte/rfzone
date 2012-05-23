@@ -18,12 +18,12 @@
 %%% @author Tony Rogvall <tony@rogvall.se>
 %%% @copyright (C) 2010, Tony Rogvall
 %%% @doc
-%%%    Tellstick application supervisor.
+%%%    rfZone application supervisor.
 %%% @end
 %%% Created :  6 November 2011
 %%%-------------------------------------------------------------------
 
--module(tellstick_sup).
+-module(rfzone_sup).
 
 -behaviour(supervisor).
 -include_lib("bert/src/bert.hrl").
@@ -78,10 +78,10 @@ stop(_StartArgs) ->
 %% @private
 init(TArgs) ->
     error_logger:info_msg("~p: init: args = ~p,\n pid = ~p\n", [?MODULE, TArgs, self()]),
-    I = tellstick_srv,
+    I = rfzone_srv,
     Opts = proplists:get_value(options, TArgs, []),	    
-    Tellstick = {I, {I, start_link, [Opts]}, permanent, 5000, worker, [I]},
+    Rfzone = {I, {I, start_link, [Opts]}, permanent, 5000, worker, [I]},
  
-    error_logger:info_msg("~p: About to start ~p\n", [?MODULE,Tellstick]),
-    {ok, { {one_for_one, 0, 300}, [Tellstick]} }.
+    error_logger:info_msg("~p: About to start ~p\n", [?MODULE,Rfzone]),
+    {ok, { {one_for_one, 0, 300}, [Rfzone]} }.
 

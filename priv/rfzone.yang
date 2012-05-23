@@ -1,11 +1,11 @@
 /*
- * YANG description of a tellstick configuration
+ * YANG description of a rfZone configuration
  *
  */
 
-module tellstick {
+module rfzone {
 
-    namespace "http://rogvall.se/ns/tellstick";
+    namespace "http://rogvall.se/ns/rfzone";
     prefix ts;
 
     import uart { prefix uart; }
@@ -17,7 +17,7 @@ module tellstick {
 	"Tony Rogvall <tony@rogvall.se>";
 
     description 
-	"Tellstick configuration description";
+	"rfZone configuration description";
 
     revision 2012-05-09 {
        description
@@ -110,7 +110,7 @@ module tellstick {
       }
     } // end remote-id
 
-    grouping tellstick-config {
+    grouping rfzone-config {
 
 	leaf product {
 	    description "Product number.";
@@ -293,7 +293,7 @@ module tellstick {
 
 	  } // end protocol
 	} // end item
-    } // end tellstick-config
+    } // end rfzone-config
 
     rpc analog_input { 
       description "Change level.";

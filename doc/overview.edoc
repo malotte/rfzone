@@ -1,13 +1,13 @@
 @author  Tony Rogvall <tony@rogvall.se>
 @author  Malotte W Lönne <malotte@malotte.net>
 @version 1.0
-@title Tellstick control application
+@title rfZone control application
 @doc A CANopen application that connects to a CANopen node and receives commands that can be interpreted and transfered to a tellstick device.
 
 == General ==
-The tellstick application enables to send remote control commands from a CANopen node, such as the SeaZone RC application for iPhone/iPod/iPad, via a tellstick device to your electrical equipment. I.e. you can use your phone to turn on the light etc.
+The rfZone application enables to send remote control commands from a CANopen node, such as the SeaZone RC application for iPhone/iPod/iPad, via a tellstick device to your electrical equipment. I.e. you can use your phone to turn on the light etc.
 
-tellstick has support for the following remote control protocols:
+rfZone has support for the following remote control protocols:
 <ul>
 <li>nexa</li>
 <li>nexax</li>
@@ -17,27 +17,27 @@ tellstick has support for the following remote control protocols:
 <li>risingsun</li>
 </ul>
 
-For a mapping between these protocols and brands see: <a href="https://github.com/malotte/tellstick/wiki/Protocol---Brand-Map" target="_blank">Protocol - Brand Map</a>
+For a mapping between these protocols and brands see: <a href="https://github.com/malotte/rfzone/wiki/Protocol---Brand-Map" target="_blank">Protocol - Brand Map</a>
 
 == Installation ==
-Installation is described in the tellstick README at github: 
-<a href="https://github.com/malotte/tellstick" target="_blank">README</a>
+Installation is described in the rfZone README at github: 
+<a href="https://github.com/malotte/rfzone" target="_blank">README</a>
 
 == User's Guide ==
-User Guides can be found on the tellstick wiki at github: <br/>
-<a href="https://github.com/malotte/tellstick/wiki/howto_configure_tellstick" target="_blank">How to configure tellstick</a><br/>
-<a href="https://github.com/malotte/tellstick/wiki/howto_install_as_service" target="_blank">How to install tellstick as a service</a>
+User Guides can be found on the rfZone wiki at github: <br/>
+<a href="https://github.com/malotte/rfzone/wiki/howto_configure_rfzone" target="_blank">How to configure rfZone</a><br/>
+<a href="https://github.com/malotte/rfzone/wiki/howto_install_as_service" target="_blank">How to install rfZone as a service</a>
  
 == Implementation ==
-The tellstick application consists of:
+The rfZone application consists of:
 <ul>
-<li>tellstick - Starts the tellstick application.</li>
-<li>tellstick_sup - Supervisor starting the tellstick server.</li>
-<li>tellstick_srv - Server receiving CANopen messages interpreted by the pds/canopen application.</li>
+<li>rfzone - Starts the rfZone application.</li>
+<li>rfzone_sup - Supervisor starting the rfZone server.</li>
+<li>rfzone_srv - Server receiving CANopen messages interpreted by the pds/canopen application.</li>
 <li>tellstick_drv  - Server sending remote control commnds to the tellstick device. </li>
 </ul>
 
-The application reads its configuration from a file, if none specified "tellstick.conf", located in the applications priv-directory, is used as default.
+The application reads its configuration from a file, if none specified "rfzone.conf", located in the applications priv-directory, is used as default.
 
 The application uses the canopen application for getting access to the CANopen network.
 The application attaches to a CANopen node and adds subscriptions for the MPDO messages it wants to receive.
@@ -60,7 +60,7 @@ messages are sent to the originting CANopen node.
 
 When receiving ?MSG_ANALOG/?MSG_DIGITAL the indicated items are activated/deactivated/adjusted as requested. This is done by sending a command using the correct protocol to the tellstick device. A ?MSG_OUTPUT_ACTIVE is sent as a reply to the originating CANopen node. 
 
-For testing purposes it is possible to run tellstick in simulated mode, setting the device option to simulated. In this mode output is written on standard out instead of sent to the device.
+For testing purposes it is possible to run rfZone in simulated mode, setting the device option to simulated. In this mode output is written on standard out instead of sent to the device.
 
 See also the documentation for canopen (see {@link canopen}).
 

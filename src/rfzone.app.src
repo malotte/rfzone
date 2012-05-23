@@ -1,0 +1,13 @@
+{application, rfzone,
+ [
+  {description, "rfZone application"},
+  {vsn, git},
+  {registered, [rfzone]},
+  {applications, [
+                  kernel,
+                  stdlib,
+		  canopen
+                 ]},
+  {modules,[rfzone, rfzone_srv, tellstick_drv, rfzone_sup]},
+  {mod, {rfzone, []}}
+ ]}.
