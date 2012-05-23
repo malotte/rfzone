@@ -48,15 +48,13 @@ serial() ->
 
 init() ->
     Serial = serial(),
-    File = filename:join(code:priv_dir(canopen), "default.dict"),
     can_router:start(),
     can_udp:start(tellstick_test, 0),
     {ok, _PPid} = co_proc:start_link([{linked, false}]),
     {ok, _NPid} = co_api:start_link(Serial, 
 				    [{linked, false},
 				     {use_serial_as_xnodeid, true},
-				     {load_last_saved, false},
-				     {dict_file,File},
+				     {dict,default},
 				     {max_blksize, 7},
 				     {vendor,?SEAZONE},
 				     {debug, true}]),
@@ -71,6 +69,7 @@ start() ->
     {ok, _NPid} = co_api:start_link(Serial, 
 				     [{linked, false},
 				      {name, co_tellstick},
+				      {dict, saved},
 				      {use_serial_as_xnodeid, true},
 				      {nmt_role, autonomous},
 				      {max_blksize, 7},
@@ -88,10 +87,12 @@ stop() ->
     io:format("Stop bert server manually\n",[]).
 
 start_tellstick() ->
-    tellstick_srv:start_link([{linked, false},
-			      {debug, true},
-			      {config, "/Users/malotte/erlang/tellstick/test/tellstick_SUITE_data/tellstick.conf"},
-			      {co_node, serial()}]).
+    {ok, _TPid} = 
+	tellstick_srv:start_link([{linked, false},
+				  {retry_timeout, 5000}, 
+				  {debug, true},
+				  {config, "/Users/malotte/erlang/tellstick/test/tellstick_SUITE_data/tellstick.conf"},
+				  {co_node, serial()}]).
    
 
 stop_tellstick() ->

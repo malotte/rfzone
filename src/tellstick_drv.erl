@@ -75,6 +75,7 @@
 	  device,         %% device string and version
 	  command,        %% last command
 	  client,         %% last client
+	  call_buf,       %% Buf to buffer call
 	  reply = (<<>>), %% last reply
 	  reply_timer,    %% timeout waiting for reply
 	  retry_timer     %% retry open port timeout
@@ -163,7 +164,7 @@ change_device(NewDevice) ->
 nexa(House,Channel,On,[]) when
       House >= $A, House =< $P,
       Channel >= 1, Channel =< 16, (is_boolean(On) orelse On=:=bell) ->
-    gen_server:call(?SERVER, {nexa,House,Channel,On}).
+    gen_server:call(?SERVER, {nexa,House,Channel,On}, 9000).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -186,7 +187,7 @@ nexax(Serial,Channel,Level,_Flags) when
       (is_boolean(Level) orelse (Level =:= bell) 
        orelse (is_integer(Level) andalso (Level >= 0)
 	       andalso (Level =< 255))) ->
-    gen_server:call(?SERVER, {nexax,Serial,Channel,Level}).
+    gen_server:call(?SERVER, {nexax,Serial,Channel,Level}, 9000).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -205,7 +206,7 @@ nexax(Serial,Channel,Level,_Flags) when
 waveman(House,Channel,On,[]) when
       House >= $A, House =< $P,
       Channel >= 1, Channel =< 16, is_boolean(On) ->
-    gen_server:call(?SERVER, {waveman,House,Channel,On}).    
+    gen_server:call(?SERVER, {waveman,House,Channel,On}, 9000).    
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -222,7 +223,7 @@ waveman(House,Channel,On,[]) when
 
 sartano(_Dummy,Channel,On,[]) when
     Channel >= 0, Channel =< 16#3FF, is_boolean(On) ->
-    gen_server:call(?SERVER, {sartano,Channel,On}).
+    gen_server:call(?SERVER, {sartano,Channel,On}, 9000).
     
 %%--------------------------------------------------------------------
 %% @doc
@@ -237,7 +238,7 @@ sartano(_Dummy,Channel,On,[]) when
 -spec ikea(System::integer(), 
 	   Channel::integer(), 
 	   Level::integer(), 
-	   Flags::list({style, Style:: 0|1})) -> 
+	   Flags::list({style, Style:: smooth | instant})) -> 
 		  ok | {error, Error::term()}.
 
 ikea(System,Channel,Level,Flags) when
@@ -250,7 +251,7 @@ ikea(System,Channel,Level,Flags) when
 	    smooth -> 1;
 	    instant -> 0
 	end,
-    gen_server:call(?SERVER, {ikea,System,Channel,Level,DimStyle}).
+    gen_server:call(?SERVER, {ikea,System,Channel,Level,DimStyle}, 9000).
     
 %%--------------------------------------------------------------------
 %% @doc
@@ -268,7 +269,7 @@ ikea(System,Channel,Level,Flags) when
 
 risingsun(Code,Unit,On,[]) when
       Code >= 1, Code =< 4, Unit >= 1, Unit =< 4, is_boolean(On) ->    
-    gen_server:call(?SERVER, {risingsun,Code,Unit,On}).
+    gen_server:call(?SERVER, {risingsun,Code,Unit,On}, 9000).
 
 
 %%--------------------------------------------------------------------
@@ -329,7 +330,7 @@ init(Opts) ->
 	    {_,OptDevice} -> OptDevice
 	end,
 
-    RetryTimeout = proplists:get_value(retry_timeout, Opts, 1000),
+    RetryTimeout = proplists:get_value(retry_timeout, Opts, infinity),
     S = #ctx { device=Device, retry_timer = RetryTimeout},
 
     case open(S) of
@@ -343,23 +344,29 @@ open(Ctx=#ctx {device = {simulated, _Version} }) ->
 
 open(Ctx=#ctx {device = {DeviceName, Version}, retry_timer = RetryTimeout }) ->
 
-    %% Only 4800 possible for tellstick ...
+    %% Only 4800 possible for tellstick v1 ...
     Speed = case Version of
 		v1 -> 4800;
 		v2 -> 9600
 	    end,
 
-    case sl:open(DeviceName,[{baud,Speed},{bufsz,10},{buftm, 1}]) of
+    case sl:open(DeviceName,[{baud,Speed}]) of
 	{ok,SL} ->
 	    ?dbg(?SERVER,"TELLSTICK open: ~s@~w -> ~p", [DeviceName,Speed,SL]),
-	    sl:send(SL, "V+"),
+	    %% sl:send(SL, "V+"), Need to take care of answer
 	    {ok, Ctx#ctx { sl=SL }};
 	{error, E} when E == eaccess;
 			E == enoent ->
-	    ?dbg(?SERVER,"open: Port could not be opened, will try again "
-		 "in ~p millisecs.\n", [RetryTimeout]),
-	    erlang:send_after(RetryTimeout, self(), retry),
-	    {ok, Ctx};
+	    if RetryTimeout == infinity ->
+		    ?dbg(?SERVER,"open: Driver not started, reason = ~p.\n", [E]),
+		    {error, E};
+	       true ->
+		    ?dbg(?SERVER,"open: Port could not be opened, will try again "
+			 "in ~p millisecs.\n", [RetryTimeout]),
+		    erlang:send_after(RetryTimeout, self(), retry),
+		    {ok, Ctx}
+	    end;
+	    
 	Error ->
 	    ?dbg(?SERVER,"open: Driver not started, reason = ~p.\n", 
 		 [Error]),
@@ -397,6 +404,11 @@ close(Ctx) ->
 			 {stop, Reason::atom(), Reply::term(), Ctx::#ctx{}}.
 
 
+handle_call(Call,From,Ctx=#ctx {client = Client}) 
+  when Client =/= undefined andalso Call =/= stop ->
+    %% Driver is busy ..
+    ?dbg(?SERVER,"handle_call: Driver busy, store call ~p", [Call]),
+    {noreply, Ctx#ctx {call_buf = {Call, From}}};
 handle_call({nexa,House,Channel,On},From,Ctx) ->
     command(nexa_command,[House, Channel, On], Ctx#ctx {client = From});
 handle_call({nexax,Serial,Channel,Level},From,Ctx) ->
@@ -411,6 +423,7 @@ handle_call({risingsun,Code,Unit,On},From,Ctx) ->
     command(risingsun_command, [Code,Unit,On], Ctx#ctx {client = From});
 
 handle_call({change_device, Device={_DeviceName, _Version}}, _From, Ctx) ->
+    ?dbg(?SERVER,"handle_call: change device to ~p", [Device]),
     close(Ctx),
     case open(Ctx#ctx {device = Device}) of
 	{ok, Ctx1} ->
@@ -429,17 +442,20 @@ handle_call(stop, _From, Ctx) ->
 handle_call(_Request, _From, Ctx) ->
     {reply, {error,bad_call}, Ctx}.
 
-command(F, Args, Ctx=#ctx {sl = SL}) when SL =/= undefined ->
+command(F, Args, Ctx=#ctx {sl = SL, client = _Client}) 
+  when SL =/= undefined ->
     try apply(?MODULE, F, Args) of
 	Command ->
 	    case send_command(SL, Command) of
 		ok ->
+		    ?dbg(?SERVER,"command: sent, client ~p", [_Client]),
 		    %% Wait for confirmation
-		    TRef = erlang:send_after(5000, self(), timeout),
+		    TRef = erlang:send_after(3000, self(), timeout),
 		    {noreply,Ctx#ctx {command = Command, reply_timer = TRef}};
 		{simulated, ok} ->
 		    {reply, ok, Ctx};
 		Other ->
+		    ?dbg(?SERVER,"command: send failed, reason ~p", [Other]),
 		    {reply, Other, Ctx}
 	    end
     catch
@@ -496,10 +512,12 @@ handle_info(retry, Ctx) ->
 	{ok, Ctx1} -> {noreply, Ctx1};
 	Error -> {stop, Error, Ctx}
     end;
+
 handle_info(timeout,  Ctx=#ctx {client = Client}) ->
     ?dbg(?SERVER,"handle_info: timeout waiting for port", []),
     gen_server:reply(Client, {error, port_timeout}),
     {noreply, Ctx#ctx {reply = <<>>, client = undefined}};
+
 handle_info({_Port, {data, Data}}, 
 	    Ctx=#ctx {reply = Reply, client = Client, reply_timer = TRef}) 
  when Client =/= undefined ->
@@ -508,11 +526,14 @@ handle_info({_Port, {data, Data}},
     %% Reply from port
     erlang:cancel_timer(TRef),
     NewReply = <<Reply/binary, Data/binary>>,
+    ?dbg(?SERVER,"handle_info: port data, new reply ~p", [NewReply]),
 
     %% To ensure quick feeadback
     case binary:match(Data,<<"+">>) of
-	{0,1} -> gen_server:reply(Client, ok);
-	_Other -> do_nothing
+	{_Any,1} -> 
+	    ?dbg(?SERVER,"handle_info: + received, ok sent to ~p", [Client]),
+	    gen_server:reply(Client, ok);
+	nomatch -> do_nothing
     end,
 
     case binary:split(NewReply, <<$\n>>) of
@@ -521,12 +542,30 @@ handle_info({_Port, {data, Data}},
 	[_Reply1, Rest] ->
 	    %% Match against command ???
 	    ?dbg(?SERVER,"handle_info: reply ~p", [_Reply1]),
-	    %% gen_server:reply(Client, ok),
-	    {noreply, Ctx#ctx {reply = Rest, client = undefined}}
+	    
+	    %% Time to check for buffered calls
+	    Ctx1 = buf_call(Ctx#ctx {reply = Rest, client = undefined}),
+			    
+	    {noreply, Ctx1}
     end;
+
 handle_info(_Info, Ctx) ->
     ?dbg(?SERVER,"handle_info: Unknown info ~p", [_Info]),
     {noreply, Ctx}.
+
+
+buf_call(Ctx=#ctx {call_buf = undefined}) ->
+    Ctx;
+buf_call(Ctx=#ctx {call_buf = {Call, From}}) ->
+    ?dbg(?SERVER,"buf_call: handle buffered call ~p from ~p", [Call, From]),
+    case handle_call(Call, From, Ctx#ctx {call_buf = undefined}) of
+	{reply, Reply, Ctx1} -> gen_server:reply(From, Reply);
+	{noreply, Ctx1} -> do_nothing
+    end,
+    Ctx1.
+	    
+
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -839,7 +878,7 @@ xcommand([],T0,T1,T2,T3,Bits) ->
 %% TEST suite from telldus.suite (generated by rfcmd)
 %% @private
 test() ->
-    File = filename:join(code:priv_dir(pds), "telldus.suite"),
+    File = filename:join(code:priv_dir(tellstick), "telldus.suite"),
     case file:consult(File) of
 	{ok, Tests} ->
 	    run_test(Tests);

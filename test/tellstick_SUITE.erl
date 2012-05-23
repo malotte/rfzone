@@ -108,7 +108,7 @@ end_per_testcase(_TestCase, _Config) ->
 %%--------------------------------------------------------------------
 start_tellstick(_Config) -> 
     %% Done in init_per_testcase()
-    timer:sleep(1000),
+    timer:sleep(200),
     ok.
 
 %%--------------------------------------------------------------------
@@ -123,14 +123,14 @@ turn_on_off(_Config) ->
     co_api:notify({xnodeid, ct:get_config(source_node)}, 
 		  pdo1_tx, 16#6000, 9, <<0:32/little>>),
     %% How verify ??
-    timer:sleep(1000),
+    timer:sleep(500),
     ct:pal("Turning off", []),
     co_api:notify({xnodeid, ct:get_config(source_node)}, 
 		  pdo1_tx, 16#6000, 9, <<1:32/little>>),
     co_api:notify({xnodeid, ct:get_config(source_node)}, 
 		  pdo1_tx, 16#6000, 9, <<0:32/little>>),
     %% How verify ??
-    timer:sleep(1000),
+    timer:sleep(500),
     ct:pal("Ready", []),
     ok.
 

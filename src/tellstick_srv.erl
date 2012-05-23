@@ -107,7 +107,7 @@
 	}).
 
 %% For dialyzer
--type start_options()::{co_node, CoNode::term()} |
+-type start_options()::{co_node, CoNode::node_identity()} |
 		       {config, File::string()} |
 		       {reset, TrueOrFalse::boolean()} |
 		       {retry_timeout, TimeOut::timeout()} |
@@ -401,9 +401,8 @@ start_device(Args, Conf) ->
 	    {ok, _Pid} = tellstick_drv:start_link([{device,{simulated, ?DEF_VERSION}},
 						   {debug, get(dbg)}]),
 	    undefined;
-	_NotSimulated ->
-	    Device = Conf#conf.device,
-	    TOut = proplists:get_value(retry_timeout, Args, 1000),
+	Device ->
+	    TOut = proplists:get_value(retry_timeout, Args, infinity),
 	    ?dbg(?SERVER,"init: Device = ~p.", [Device]),
 	    {ok, _Pid} = tellstick_drv:start_link([{device,Device},
 						   {retry_timeout, TOut},
@@ -513,7 +512,7 @@ handle_call({configure_item, RemoteId, Channel, Config} = X, _From,
 	    case verify_item(NewItem) of
 		ok ->
 		    {reply, ok, Ctx=#ctx {items = [NewItem | Items]}};
-		{nok, Reason} ->
+		{error, Reason} ->
 		    {reply, {error, Reason}, Ctx}
 	    end;
 	{value,OldItem,OtherItems} ->
@@ -729,12 +728,12 @@ full_filename(FileName) ->
 
 
 subscribe(CoNode) ->
-    ?dbg(?SERVER,"subscribe: IndexList = ~p",[?COMMANDS]),
+    ?dbg(?SERVER,"subscribe: IndexList = ~w",[?COMMANDS]),
     lists:foreach(fun({{Index, _SubInd}, _Type, _Value}) ->
 			  co_api:extended_notify_subscribe(CoNode, Index)
 		  end, ?COMMANDS).
 unsubscribe(CoNode) ->
-    ?dbg(?SERVER,"unsubscribe: IndexList = ~p",[?COMMANDS]),
+    ?dbg(?SERVER,"unsubscribe: IndexList = ~w",[?COMMANDS]),
     lists:foreach(fun({{Index, _SubInd}, _Type, _Value}) ->
 			  co_api:extended_notify_unsubscribe(CoNode, Index)
 		  end, ?COMMANDS).
@@ -769,7 +768,7 @@ load_conf([C | Cs], Conf, Items) ->
 	    case verify_item(Item) of
 		ok ->
 		    load_conf(Cs, Conf, [Item | Items]);
-		{nok, Reason} ->
+		{error, Reason} ->
 		    error_logger:error_msg(
 		      "Inconsistent item ~p, could not be loaded, reason ~p\n", 
 		      [Item, Reason]),
@@ -804,11 +803,17 @@ verify_item(_I=#item {type = Type, unit = Unit, lchan = Channel, flags = Flags})
 	ok ->
 	    case verify_channel_range(Type, Channel) of
 		ok ->
-		    verify_flags(Type, Flags);
-		{nok, _Reason} = N->
+		    Analog = proplists:get_bool(analog, Flags),
+		    Digital = proplists:get_bool(digital, Flags),
+		    if Analog orelse Digital ->
+			    verify_flags(Type, Flags);
+		       true ->
+			    {error, must_be_digital_or_analog}
+		    end;
+		{error, _Reason} = N->
 		    N
 	    end;
-	{nok, _Reason} = N ->
+	{error, _Reason} = N ->
 	    N
     end.
 
@@ -837,7 +842,7 @@ verify_unit_range(risingsun, Unit)
 verify_unit_range(Type, Unit) ->
     ?dbg(?SERVER,"verify_unit_range: invalid type/unit combination ~p,~p", 
 		   [Type, Unit]),
-    {nok, invalid_type_unit_combination}.
+    {error, invalid_type_unit_combination}.
 
 verify_channel_range(nexa, Channel) 
   when Channel >= 1,
@@ -866,7 +871,7 @@ verify_channel_range(risingsun, Channel)
 verify_channel_range(Type, Channel) ->
     ?dbg(?SERVER,"verify_channel_range: invalid type/channel combination ~p,~p", 
 		   [Type, Channel]),
-    {nok, invalid_type_channel_combination}.
+    {error, invalid_type_channel_combination}.
 
 
 verify_flags(_Type, []) ->
@@ -908,7 +913,7 @@ verify_flags(nexax = Type, [{analog_max, Max} | Flags])
 verify_flags(Type, [Flag | _Flags]) ->
     ?dbg(?SERVER,"verify_flags: invalid type/flag combination ~p,~p", 
 		   [Type, Flag]),
-    {nok, invalid_type_flag_combination}.
+    {error, invalid_type_flag_combination}.
 
 
 translate({xcobid, Func, Nid}) ->
@@ -935,7 +940,14 @@ reset_items(Items) ->
       fun(I) ->
 	      ?dbg(?SERVER,"reset_items: resetting ~p, ~p, ~p", 
 		   [I#item.type,I#item.unit,I#item.lchan]),
- 	      call(I#item.type,[I#item.unit,I#item.lchan,false,[]])
+	      %% timer:sleep(1000), %% Otherwise tellstick chokes ..
+	      Analog = proplists:get_bool(analog, I#item.flags),
+	      Digital = proplists:get_bool(digital, I#item.flags),
+	      if Digital ->
+		      call(I#item.type,[I#item.unit,I#item.lchan,false,[]]);
+		 Analog ->
+		      call(I#item.type,[I#item.unit,I#item.lchan,0,[{style, instant}]])
+	      end
       end,
       Items).
 
@@ -1107,7 +1119,7 @@ encoder_input_int(_Nid, I, Is, _Value) ->
     [I|Is].
 
 call(Type, Args) ->	       
-    ?dbg(?SERVER,"call: Type = ~p, Args = ~p.", [Type, Args]),
+    ?dbg(?SERVER,"call: Type = ~p, Args = ~w.", [Type, Args]),
     try apply(tellstick_drv, Type, Args) of
 	ok ->
 	    ok;
