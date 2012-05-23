@@ -483,7 +483,7 @@ handle_cast({setopt, {Option, Value}}, Ctx=#ctx {sl = SL}) ->
     {noreply, Ctx};
 handle_cast({command, Command}, Ctx=#ctx {sl = SL}) ->
     ?dbg(?SERVER,"handle_cast: command ~p", [Command]),
-    Reply = sl:send(SL, Command),
+    _Reply = sl:send(SL, Command),
     ?dbg(?SERVER,"handle_cast: command reply ~p", [Reply]),
     {noreply, Ctx};
 handle_cast(_Msg, Ctx) ->

@@ -26,7 +26,6 @@
 -module(rfzone_sup).
 
 -behaviour(supervisor).
--include_lib("bert/src/bert.hrl").
 
 %% API
 -export([start_link/1, stop/1]).
