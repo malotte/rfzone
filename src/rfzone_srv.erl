@@ -39,6 +39,7 @@
 	 stop/0]).
 -export([reload/0, 
 	 reload/1]).
+%% RPC API
 -export([analog_input/3,digital_input/3]).
 -export([item_configuration/2, configure_item/3]).
 -export([device_configuration/0, configure_device/1]).
@@ -371,8 +372,8 @@ conf(Args,CoNode) ->
     ?dbg(?SERVER,"init: File = ~p", [ConfFile]),
 
     case load_config(ConfFile) of
-	{ok, Conf} ->
-	    Device = start_device(Args, Conf),
+	{ok, Conf=#conf {device = Device}} ->
+	    start_device(Args, Device),
 	    {ok, _Dict} = co_api:attach(CoNode),
 	    Nid = co_api:get_option(CoNode, id),
 	    subscribe(CoNode),
@@ -393,21 +394,19 @@ conf(Args,CoNode) ->
 	    {stop, Error}
     end.
 
-start_device(Args, Conf) ->
-    case Conf#conf.device of
+start_device(Args, Device) ->
+    case Device of
 	{simulated, _Version} ->
 	    ?dbg(?SERVER,"init: Driver undefined, running simulated.", []),
 	    %% How handle ??
 	    {ok, _Pid} = tellstick_drv:start_link([{device,{simulated, ?DEF_VERSION}},
-						   {debug, get(dbg)}]),
-	    undefined;
+						   {debug, get(dbg)}]);
 	Device ->
 	    TOut = proplists:get_value(retry_timeout, Args, infinity),
 	    ?dbg(?SERVER,"init: Device = ~p.", [Device]),
 	    {ok, _Pid} = tellstick_drv:start_link([{device,Device},
 						   {retry_timeout, TOut},
-						   {debug, get(dbg)}]),
-	    Device
+						   {debug, get(dbg)}])
     end.
 
 %%--------------------------------------------------------------------
