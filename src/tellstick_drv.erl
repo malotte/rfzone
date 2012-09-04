@@ -71,7 +71,7 @@
 
 -record(ctx, 
 	{
-	  sl,             %% serial port descriptor
+	  uart,           %% serial port descriptor
 	  device,         %% device string and version
 	  command,        %% last command
 	  client,         %% last client
@@ -327,9 +327,10 @@ init(Opts) ->
 		    false -> simulated;
 		    EnvDevice -> {EnvDevice, v1}
 		end;
-	    {_,OptDevice} -> OptDevice
+	    {device,PropDev} when is_list(PropDev) -> {PropDev,v1};
+	    {device,Dev={DeviceName,v1}} when is_list(DeviceName) -> Dev;
+	    {device,Dev={DeviceName,v2}} when is_list(DeviceName) -> Dev
 	end,
-
     RetryTimeout = proplists:get_value(retry_timeout, Opts, infinity),
     S = #ctx { device=Device, retry_timer = RetryTimeout},
 
@@ -340,7 +341,7 @@ init(Opts) ->
 	    
 open(Ctx=#ctx {device = {simulated, _Version} }) ->
     ?dbg(?SERVER,"TELLSTICK open: simulated\n", []),
-    {ok, Ctx#ctx { sl=simulated }};
+    {ok, Ctx#ctx { uart=simulated }};
 
 open(Ctx=#ctx {device = {DeviceName, Version}, retry_timer = RetryTimeout }) ->
 
@@ -349,12 +350,13 @@ open(Ctx=#ctx {device = {DeviceName, Version}, retry_timer = RetryTimeout }) ->
 		v1 -> 4800;
 		v2 -> 9600
 	    end,
-
-    case sl:open(DeviceName,[{baud,Speed}]) of
-	{ok,SL} ->
-	    ?dbg(?SERVER,"TELLSTICK open: ~s@~w -> ~p", [DeviceName,Speed,SL]),
-	    %% sl:send(SL, "V+"), Need to take care of answer
-	    {ok, Ctx#ctx { sl=SL }};
+    Options = [{baud,Speed},{mode,binary},{active,true},{packet,0},
+	       {csize,8},{parity,none},{stopb,1}],
+    case uart:open(DeviceName,Options) of
+	{ok,U} ->
+	    ?dbg(?SERVER,"TELLSTICK open: ~s@~w -> ~p", [DeviceName,Speed,U]),
+	    %% uart:send(U, "V+"), Need to take care of answer
+	    {ok, Ctx#ctx { uart=U }};
 	{error, E} when E == eaccess;
 			E == enoent ->
 	    if RetryTimeout == infinity ->
@@ -373,10 +375,10 @@ open(Ctx=#ctx {device = {DeviceName, Version}, retry_timer = RetryTimeout }) ->
 	    Error
     end.
 
-close(Ctx=#ctx {sl = SL}) when is_port(SL) ->
-    ?dbg(?SERVER,"TELLSTICK close: ~p", [SL]),
-    sl:close(SL),
-    {ok, Ctx#ctx { sl=undefined }};
+close(Ctx=#ctx {uart = U}) when is_port(U) ->
+    ?dbg(?SERVER,"TELLSTICK close: ~p", [U]),
+    uart:close(U),
+    {ok, Ctx#ctx { uart=undefined }};
 close(Ctx) ->
     {ok, Ctx}.
 
@@ -442,11 +444,11 @@ handle_call(stop, _From, Ctx) ->
 handle_call(_Request, _From, Ctx) ->
     {reply, {error,bad_call}, Ctx}.
 
-command(F, Args, Ctx=#ctx {sl = SL, client = _Client}) 
-  when SL =/= undefined ->
+command(F, Args, Ctx=#ctx {uart = U, client = _Client}) 
+  when U =/= undefined ->
     try apply(?MODULE, F, Args) of
 	Command ->
-	    case send_command(SL, Command) of
+	    case send_command(U, Command) of
 		ok ->
 		    ?dbg(?SERVER,"command: sent, client ~p", [_Client]),
 		    %% Wait for confirmation
@@ -477,13 +479,13 @@ command(_F, _Args, Ctx) ->
 			 {noreply, Ctx::#ctx{}} |
 			 {stop, Reason::term(), Ctx::#ctx{}}.
 
-handle_cast({setopt, {Option, Value}}, Ctx=#ctx {sl = SL}) ->
+handle_cast({setopt, {Option, Value}}, Ctx=#ctx { uart = U}) ->
     ?dbg(?SERVER,"handle_cast: setopt ~p = ~p", [Option, Value]),
-    sl:setopt(SL, Option, Value),
+    uart:setopt(U, Option, Value),
     {noreply, Ctx};
-handle_cast({command, Command}, Ctx=#ctx {sl = SL}) ->
+handle_cast({command, Command}, Ctx=#ctx {uart = U}) ->
     ?dbg(?SERVER,"handle_cast: command ~p", [Command]),
-    _Reply = sl:send(SL, Command),
+    _Reply = uart:send(U, Command),
     ?dbg(?SERVER,"handle_cast: command reply ~p", [Reply]),
     {noreply, Ctx};
 handle_cast(_Msg, Ctx) ->
@@ -518,9 +520,9 @@ handle_info(timeout,  Ctx=#ctx {client = Client}) ->
     gen_server:reply(Client, {error, port_timeout}),
     {noreply, Ctx#ctx {reply = <<>>, client = undefined}};
 
-handle_info({_Port, {data, Data}}, 
+handle_info({uart,U,Data}, 
 	    Ctx=#ctx {reply = Reply, client = Client, reply_timer = TRef}) 
- when Client =/= undefined ->
+ when U =:= Ctx#ctx.uart, Client =/= undefined ->
     ?dbg(?SERVER,"handle_info: port data ~p", [Data]),
 
     %% Reply from port
@@ -826,7 +828,7 @@ reverse_bits_(Bits, I, RBits) ->
 send_command(simulated, _Data) ->
     ?dbg(?SERVER,"send_command: Sending data =~p\n", [_Data]),
     {simulated, ok};
-send_command(SL, Data) ->
+send_command(U, Data) ->
     Data1 = ascii_data(Data),
     N = length(Data1),
     Command = 
@@ -835,7 +837,7 @@ send_command(SL, Data) ->
 	    N =< 255 ->
 		[?TELLSTICK_XSEND, xcommand(Data1), ?TELLSTICK_END]
 	end,
-    sl:send(SL, Command).
+    uart:send(U, Command).
 
 ascii_data(Data) ->
     [ ?US_TO_ASCII(T) || T <- lists:flatten(Data) ].
