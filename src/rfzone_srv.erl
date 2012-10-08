@@ -582,7 +582,7 @@ handle_call(_Request, _From, Ctx) ->
 handle_cast({extended_notify, _Index, Frame}, Ctx) ->
     ?dbg(?SERVER,"handle_cast: received notify with frame ~w.",[Frame]),
     %% Check index ??
-    RemoteId = ?CANID_TO_COBID(Frame#can_frame.id),
+    RemoteId = ?CANID_TO_COBID(Frame#can_frame.id), %% Not X format ??
     <<_F:1, _Addr:7, Ix:16/little, Si:8, Data:4/binary>> = Frame#can_frame.data,
     ?dbg(?SERVER,"handle_cast: index = ~.16.0#:~w, data = ~w.",[Ix, Si, Data]),
     try co_codec:decode(Data, unsigned32) of
