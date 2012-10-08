@@ -33,7 +33,7 @@ rfZone is built using rebar that can be found [here](https://github.com/basho/re
 
 rfZone also requires the following applications to be installed:
 <ul>
-<li>sl - https://github.com/tonyrog/sl</li>
+<li>uart - https://github.com/tonyrog/uart</li>
 <li>eapi - https://github.com/tonyrog/eapi</li>
 <li>can - https://github.com/tonyrog/can</li>
 <li>canopen - https://github.com/tonyrog/canopen</li>
@@ -117,7 +117,7 @@ You probably also have to update "rfzone/rel/reltool.config" with the correct pa
        {app, sasl,   [{incl_cond, include}]},
        {app, stdlib, [{incl_cond, include}]},
        {app, kernel, [{incl_cond, include}]},
-       {app, sl, [{incl_cond, include}]},
+       {app, uart, [{incl_cond, include}]},
        {app, eapi, [{incl_cond, include}]},
        {app, can, [{incl_cond, include}]},
        {app, canopen, [{incl_cond, include}]},
