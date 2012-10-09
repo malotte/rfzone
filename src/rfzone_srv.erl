@@ -90,10 +90,10 @@
 	  rchan,  %% remote channel
 
 	  %% Local ID
-	  type,     %% nexa, ikea ...
+	  type,     %% nexa, ikea ... email
 	  unit,     %% serial/unit/house code
-	  lchan,    %% Local channel
-	  flags=[], %% Control flags
+	  lchan,    %% Local channel / mail content
+	  flags=[], %% Control flags  / mail flags
 
 	  %% State
 	  active = false,  %% off
@@ -884,6 +884,13 @@ load_conf([], Conf, Is, Ts) ->
 	    {ok, Conf#conf {items=Is,events=Ts}}
     end.
 
+verify_item(_I=#item {type = email, unit = _Unit, lchan = Email, flags = Opts}) ->
+    case verify_mail(Email) of
+	ok -> 
+	    verify_mail_options(Opts);
+	Error -> Error
+    end;    
+
 verify_item(_I=#item {type = Type, unit = Unit, lchan = Channel, flags = Flags}) ->
     case verify_unit_range(Type, Unit) of
 	ok ->
@@ -934,6 +941,71 @@ verify_event(_I=#event {event=Event,
        {error, bad_event}
 
       ]).
+
+verify_mail({From,To,Headers,Body}) ->
+    L = lists:flatten(
+	  [ [fun() -> verify_addr(From) end, {error,bad_from_addr}],
+	    [ [ fun() -> verify_addr(T) end, {error,bad_from_addr} ] ||
+		T <- To ],
+	    [fun() -> try iolist_size([Headers,Body]) of
+			  _ -> true
+		      catch
+			  error:_ ->
+			       false
+		      end
+	     end, {error, bad_mail_body}]]),
+    verify_all(L).
+
+%% form <name@host.com>
+%%       name@host.com
+verify_addr(Name) when is_binary(Name) ->
+    verify_addr(binary_to_list(Name));
+verify_addr([$<|Addr1]) ->
+    case lists:reverse(Addr1) of
+	[$>|Addr2] -> verify_addr(lists:reverse(Addr2));
+	_ -> false
+    end;
+verify_addr(Addr) when is_list(Addr) ->
+    case string:tokens(Addr, "@") of
+	[_Name, Host] ->
+	    case inet_parse:domain(Host) of
+		true ->
+		    case inet_parse:dots(Host) of
+			{N,false} when N > 0 ->
+			    true;
+			_ -> false
+		    end;
+		false ->
+		    false
+	    end;
+	_ -> false
+    end;
+verify_addr(_) ->
+    false.
+
+verify_mail_options([{K,_V}|Opts]) ->
+    case K of
+	relay    -> verify_mail_options(Opts);
+	auth     -> verify_mail_options(Opts);
+	username -> verify_mail_options(Opts);
+	password -> verify_mail_options(Opts);
+	no_mx_lookups -> verify_mail_options(Opts);
+	retries -> verify_mail_options(Opts);
+	tls -> verify_mail_options(Opts);
+	ssl -> verify_mail_options(Opts);
+	port -> verify_mail_options(Opts);
+	_ -> {error, {unknown_option, K}}
+    end;
+verify_mail_options([K|Opts]) ->
+    case K of
+	digital    -> verify_mail_options(Opts);
+	springback -> verify_mail_options(Opts);
+	_ ->  {error, {unknown_option, K}}
+    end;
+verify_mail_options([]) ->
+    ok.
+	
+	    
 
 verify_all([Fun, Error | More]) ->
     try Fun() of
@@ -1077,12 +1149,14 @@ reset_items(Items) ->
 	      ?dbg(?SERVER,"reset_items: resetting ~p, ~p, ~p", 
 		   [I#item.type,I#item.unit,I#item.lchan]),
 	      %% timer:sleep(1000), %% Otherwise rfzone chokes ..
-	      Analog = proplists:get_bool(analog, I#item.flags),
-	      Digital = proplists:get_bool(digital, I#item.flags),
+	      Fs = I#item.flags,
+	      Analog = proplists:get_bool(analog, Fs),
+	      Digital = proplists:get_bool(digital, Fs),
 	      if Digital ->
-		      call(I#item.type,[I#item.unit,I#item.lchan,false,[]]);
+		      run(I#item.type,[I#item.unit,I#item.lchan,false,[],Fs]);
 		 Analog ->
-		      call(I#item.type,[I#item.unit,I#item.lchan,0,[{style, instant}]])
+		      run(I#item.type,[I#item.unit,I#item.lchan,0,
+				       [{style, instant}], Fs])
 	      end
       end,
       Items).
@@ -1176,7 +1250,7 @@ digital_input_call(I, Nid, Is, Active) ->
 	true -> print_item(I);
 	_Other -> do_nothing
     end,
-    case call(I#item.type,[I#item.unit,I#item.lchan,Active,[]]) of
+    case run(I#item.type,[I#item.unit,I#item.lchan,Active,[],I#item.flags]) of
 	ok ->
 	    AValue = if Active -> 1; true -> 0 end,
 	    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.rchan, AValue),
@@ -1225,7 +1299,7 @@ exec_analog_input(I=#item {type = Type, rchan = Rchan, flags = Flags,
     RValue = trunc(65535*((IValue-Min)/(Max-Min))),
 
     ?dbg(?SERVER,"analog_input: calling driver with new value ~p",[IValue]),
-    case call(Type,[Unit,Dchan,IValue,[{style, Style}]]) of
+    case run(Type,[Unit,Dchan,IValue,[{style, Style}],Flags]) of
 	ok ->
 	    %% For devices without digital control output_active
 	    %% is sent when level is changed from/to 0
@@ -1254,8 +1328,26 @@ encoder_input_int(_Nid, I, Is, _Value) ->
     ?dbg(?SERVER,"encoder_input_int: Not implemented yet.",[]),
     [I|Is].
 
-call(Type, Args) ->	       
-    ?dbg(?SERVER,"call: Type = ~p, Args = ~w.", [Type, Args]),
+run(email,[_Unit,{_From,_To,_Headers,_Body},false,_Style,_Flags]) ->
+    ok;  %% do not send
+run(email,[_Unit,{From,To,Headers,Body},true,_Style,Flags]) ->
+    %% protect from sending more than one time per ...
+    %% fixme: setup callback and log failed attempts
+    Flags1 = Flags -- [digital,springback],
+    Headers1 = 
+	[ [H,"\r\n"] || 
+	    H <- Headers ++ 
+		[["Date: ", smtp_util:rfc5322_timestamp()],
+		 ["Message-ID:", smtp_util:generate_message_id()]]],
+    Message = [Headers1,"\r\n",Body],
+    case gen_smtp_client:send({From, To, Message}, Flags1) of
+	{ok,_Pid} ->
+	    ok;
+	Error -> Error
+    end;
+run(Type, [Unit,Chan,Active,Style,_Flags]) ->
+    Args = [Unit,Chan,Active,Style],
+    ?dbg(?SERVER,"action: Type = ~p, Args = ~w.", [Type, Args]),
     try apply(tellstick_drv, Type, Args) of
 	ok ->
 	    ok;

@@ -83,7 +83,7 @@ start_em([App|Apps]) ->
     case application:start(App) of
 	{error,{not_started,App1}} ->
 	    start_em([App1,App|Apps]);
-	{already_started,App} ->
+	{error,{already_started,App}} ->
 	    start_em(Apps);
 	ok ->
 	    start_em(Apps);

@@ -382,7 +382,9 @@ init(Opts) ->
 		end;
 	    {device,PropDev} when is_list(PropDev) -> {PropDev,v1};
 	    {device,Dev={DeviceName,v1}} when is_list(DeviceName) -> Dev;
-	    {device,Dev={DeviceName,v2}} when is_list(DeviceName) -> Dev
+	    {device,Dev={DeviceName,v2}} when is_list(DeviceName) -> Dev;
+	    {device,Dev={simulated,v1}} -> Dev;
+	    {device,Dev={simulated,v2}} -> Dev
 	end,
     RetryTimeout = proplists:get_value(retry_timeout, Opts, infinity),
     S = #ctx { device=Device, retry_timer = RetryTimeout, queue=queue:new() },
@@ -393,7 +395,7 @@ init(Opts) ->
 	    
 open(Ctx=#ctx {device = {simulated, _Version} }) ->
     lager:debug("TELLSTICK open: simulated\n", []),
-    {ok, Ctx#ctx { uart=simulated }};
+    {ok, Ctx#ctx { uart=simulated, version="0" }};
 
 open(Ctx=#ctx {device = {DeviceName, Version}, retry_timer = RetryTimeout }) ->
 
