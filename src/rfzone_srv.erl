@@ -97,6 +97,7 @@
 
 	  %% State
 	  active = false,  %% off
+	  inhibit,         %% filter activation events
 	  level = 0,       %% dim level
 	  timer            %% To filter analog input
 	}).
@@ -722,6 +723,15 @@ handle_info({tellstick_event,_Ref,EventData}, Ctx) ->
 %%				  E#event.rchan, E#event.value)
 	    end
     end;
+handle_info({timeout,Ref,inhibit}, Ctx) ->
+    %% inhibit period is overl unlock item
+    case lists:keytake(Ref, #item.inhibit, Ctx#ctx.items) of
+	{value,I,Is} ->
+	    Ctx1 = Ctx#ctx { items = [I#item {inhibit=undefined} | Is]},
+	    {noreply, Ctx1};
+	false ->
+	    {noreply, Ctx}
+    end;
 
 handle_info({'EXIT', _Pid, co_node_terminated}, Ctx) ->
     ?dbg(?SERVER,"handle_info: co_node terminated.",[]),
@@ -1231,30 +1241,36 @@ digital_input_int(I, Nid, Is, Value) ->
 	    digital_input_call(I, Nid, Is, Active);
        Digital, not SpringBack ->
 	    Active = Value =:= 1,
-	    digital_input_call(I, Nid, Is, Active);
+	    if I#item.active =:= Active ->  %% no change, do noting
+		    [I | Is];
+	       true ->
+		    digital_input_call(I, Nid, Is, Active)
+	    end;
        Digital ->
 	    ?dbg(?SERVER,"digital_input_int: No action.", []),
-	    case get(dbg) of
-		true -> print_item(I);
-		_Other -> do_nothing
-	    end,
+	    ?dbg(?SERVER,"item = ~s\n", [fmt_item(I)]),
 	    [I | Is];
        true ->
 	    ?dbg(?SERVER,"digital_input_int: not digital item.", []),
 	    [I | Is]
     end.
 
+digital_input_call(I, _Nid, Is, true) when I#item.inhibit =/= undefined ->
+    [I|Is];   %% not allowed to turn on yet
 digital_input_call(I, Nid, Is, Active) -> 
     ?dbg(?SERVER,"digital_input: calling driver.",[]),
-    case get(dbg) of
-	true -> print_item(I);
-	_Other -> do_nothing
-    end,
+    ?dbg(?SERVER,"item = ~s\n", [fmt_item(I)]),
     case run(I#item.type,[I#item.unit,I#item.lchan,Active,[],I#item.flags]) of
 	ok ->
 	    AValue = if Active -> 1; true -> 0 end,
 	    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.rchan, AValue),
-	    [I#item { active=Active} | Is];
+	    case proplists:get_value(inhibit, I#item.flags, 0) of
+		0 ->
+		    [I#item { active=Active} | Is];
+		T ->
+		    TRef = erlang:start_timer(T, self(), inhibit),
+		    [I#item { active=Active, inhibit=TRef} | Is]
+	    end;
 	_Error ->
 	    [I | Is]
     end.
@@ -1263,11 +1279,7 @@ analog_input_int(I=#item {rid = Rid, rchan = Rchan, timer = Timer, flags = Flags
 	     Is, Value) ->
     Analog = proplists:get_bool(analog, Flags),
     if Analog ->
-	    if Timer =/= undefined ->
-		    erlang:cancel_timer(Timer);
-	       true ->
-		    do_nothing
-	    end,
+	    stop_timer(Timer),
 	    ?dbg(?SERVER,"analog_input_int: buffer call for ~.16#, ~p, ~p.",
 		 [Rid, Rchan, Value]),
 	    Tref = 
@@ -1283,10 +1295,7 @@ exec_analog_input(I=#item {type = Type, rchan = Rchan, flags = Flags,
 			   unit = Unit, lchan = Dchan, active = Active}, 
 		  Nid, Is, Value) ->
     ?dbg(?SERVER,"exec_analog_input: updating item:.",[]),
-    case get(dbg) of
-	true -> print_item(I);
-	_Other -> do_nothing
-    end,
+    ?dbg(?SERVER,"item = ~s\n", [fmt_item(I)]),
 
     Digital = proplists:get_bool(digital, Flags),
     Min     = proplists:get_value(analog_min, Flags, 0),
@@ -1362,28 +1371,31 @@ run(Type, [Unit,Chan,Active,Style,_Flags]) ->
 	    ?dbg(?SERVER,"tellstick_drv: crash=~p.", [Reason]),
 	    {error,Reason}
     end.
+
+
+fmt_item(I) when is_record(I,item) ->
+    io_lib:format("{rid:~.16#,rchan:~p,type:~p,unit:~p,chan:~p,"
+		  "active:~p,level:~p,flags=~s}",
+		  [I#item.rid, I#item.rchan, 
+		   I#item.type,I #item.unit, I#item.lchan, 
+		   I#item.active, I#item.level,
+		   fmt_flags(I#item.flags)]).
+
+fmt_event(E) when is_record(E, event) ->
+    io_lib:format("{~p,rid:~.16#,rchan:~w,type:~w,value:~w}", 
+		  [E#event.event,E#event.rid,E#event.rchan, E#event.type,
+		   E#event.value]).
     
-    
-print_item(Item) when is_record(Item,item) ->
-    io:format("Item = {Rid = ~.16#, Rchan = ~p, Type = ~p, Unit = ~p, Chan = ~p, "
-	      "Active = ~p, Level = ~p, Flags = ",
-	      [Item#item.rid, Item#item.rchan, 
-	       Item#item.type,Item #item.unit, Item#item.lchan, 
-	       Item#item.active, Item#item.level]),
-    print_flags(Item#item.flags).
+print_item(I) when is_record(I,item) ->
+    io:format("item: ~s\n", [fmt_item(I)]).
 
 print_event(E) when is_record(E, event) ->
-    io:format("Event: {~p, Rid:~.16#, Rchan:~w,Type:~w,value:~w }\n", 
-	      [E#event.event,E#event.rid,E#event.rchan, E#event.type,
-	       E#event.value]).
+    io:format("event: ~s\n", [fmt_event(E)]).
 
+fmt_flags([Flag|Tail]) ->
+    [io_lib:format("~p ", [Flag]) | fmt_flags(Tail)];
+fmt_flags([]) -> "".
 
-print_flags([]) ->
-    io:format("}\n");
-print_flags([Flag | Tail]) ->
-    io:format("~p ",[Flag]),
-    print_flags(Tail).
-    
   
 encode(on) -> ?MSG_POWER_ON;
 encode(off) -> ?MSG_POWER_OFF;
@@ -1453,7 +1465,10 @@ format([{_Key, _Value} = Flag | Rest], Acc) ->
 format([Key | Rest], Acc) -> 
     format(Rest, [{Key, true} | Acc]).
 		      
-		 
-		       
-		     
-     
+stop_timer(undefined) ->
+    undefined;
+stop_timer(Ref) ->
+    erlang:cancel_timer(Ref).
+
+
+    
