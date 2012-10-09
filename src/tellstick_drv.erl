@@ -702,16 +702,20 @@ remove_subscription(Ref, Ctx=#ctx { subs=Subs}) ->
 event_notify(String, Ctx) ->
     Event = 
 	[ case string:tokens(D, ":") of
-	      [K,V] ->
-		  {list_to_atom(K), V};
 	      ["data",Data="0x"++Value] ->
-		  try integer_to_list(Value,16) of
+		  try list_to_integer(Value,16) of
 		      V -> {data, V}
 		  catch
-		      error:_ ->  %% fixme log this
+		      error:Error ->  
+		          lager:error("unable to convert ~p to integer:~p\n",
+                                      [Data, Error]),
 			  {data,Data}
 		  end;
-	      [K] ->   {undefined, K}
+	      [K,V] ->
+		  {list_to_atom(K), V};
+	      [K] ->
+
+	          {undefined, K}
 	  end || D <- string:tokens(String, ";")],
     send_event(Ctx#ctx.subs, Event),
     %% send to event listener(s)
