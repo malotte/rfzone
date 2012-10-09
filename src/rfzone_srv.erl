@@ -995,6 +995,7 @@ verify_addr(_) ->
 
 verify_mail_options([{K,_V}|Opts]) ->
     case K of
+	inhibit -> verify_mail_options(Opts);
 	relay    -> verify_mail_options(Opts);
 	auth     -> verify_mail_options(Opts);
 	username -> verify_mail_options(Opts);
@@ -1128,6 +1129,9 @@ verify_flags(nexax = Type, [{analog_min, Min} | Flags])
     verify_flags(Type, Flags);
 verify_flags(nexax = Type, [{analog_max, Max} | Flags]) 
   when Max >= 0, Max =< 255 ->
+    verify_flags(Type, Flags);
+verify_flags(Type, [{inhib,Time} | Flags])
+  when is_integer(Time), Time >= 0 ->
     verify_flags(Type, Flags);
 verify_flags(_Type, [_Flag | _Flags]) ->
     ?dbg(?SERVER,"verify_flags: invalid type/flag combination ~p,~p", 
