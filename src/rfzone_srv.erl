@@ -32,7 +32,10 @@
 -include_lib("can/include/can.hrl").
 -include_lib("canopen/include/canopen.hrl").
 -include_lib("canopen/include/co_app.hrl").
--include_lib("canopen/include/co_debug.hrl").
+
+-include_lib("lager/include/log.hrl").
+-define(dbg(_Tag, F, A), lager:debug((F),(A))).
+%% -include_lib("canopen/include/co_debug.hrl").
 
 %% API
 -export([start_link/1, 
@@ -75,7 +78,8 @@
 	{
 	  product,
 	  device = {simulated, ?DEF_VERSION},
-	  items
+	  items = [],
+	  events = []
 	}).
 
 %% Controlled item
@@ -97,6 +101,15 @@
 	  timer            %% To filter analog input
 	}).
 
+-record(event,
+	{
+	  event,
+	  rid,    %% EFID|SFID
+	  rchan,  %% 1..254
+	  type,   %% digital,analog,encoder
+	  value   %% depend on type
+	}).
+
 %% Loop data
 -record(ctx,
 	{
@@ -104,7 +117,8 @@
 	  node_id, %% nodeid | xnodeid of co_node, needed in notify
 	           %% should maybe be fetched when needed instead of stored in loop data ??
 	  device,  %% device used
-	  items    %% controlled items
+	  items,   %% controlled items
+	  events   %% controlled events
 	}).
 
 %% For dialyzer
@@ -131,7 +145,7 @@
 			{error, Error::term()}.
 
 start_link(Opts) ->
-    error_logger:info_msg("~p: start_link: args = ~p\n", [?MODULE, Opts]),
+    lager:info("~p: start_link: args = ~p\n", [?MODULE, Opts]),
     F =	case proplists:get_value(linked,Opts,true) of
 	    true -> start_link;
 	    false -> start
@@ -351,7 +365,7 @@ debug(TrueOrFalse) when is_boolean(TrueOrFalse) ->
 		  {stop, Reason::term()}.
 
 init(Args) ->
-    error_logger:info_msg("~p: init: args = ~p,\n pid = ~p\n", [?MODULE, Args, self()]),
+    lager:info("~p: init: args = ~p,\n pid = ~p\n", [?MODULE, Args, self()]),
     Dbg = proplists:get_value(debug, Args, false),
     put(dbg, Dbg),
 
@@ -374,6 +388,7 @@ conf(Args,CoNode) ->
     case load_config(ConfFile) of
 	{ok, Conf=#conf {device = Device}} ->
 	    start_device(Args, Device),
+	    tellstick_drv:subscribe(),
 	    {ok, _Dict} = co_api:attach(CoNode),
 	    Nid = co_api:get_option(CoNode, id),
 	    subscribe(CoNode),
@@ -386,7 +401,9 @@ conf(Args,CoNode) ->
 	    {ok, #ctx { co_node = CoNode, 
 			device = Device,
 			node_id = Nid, 
-			items=Conf#conf.items }};
+			items=Conf#conf.items,
+			events=Conf#conf.events
+		      }};
 	Error ->
 	    ?dbg(?SERVER,
 		 "init: Not possible to load configuration file ~p.",
@@ -443,7 +460,7 @@ handle_call({reload, File}, _From,
     ?dbg(?SERVER,"reload ~p",[File]),
     ConfFile = full_filename(File),
     case load_config(ConfFile) of
-	{ok,_Conf=#conf {device = NewDevice, items = NewItems}} ->
+	{ok,_Conf=#conf {device=NewDevice,items=NewItems,events=Events}} ->
 	    if NewDevice =/= OldDevice ->
 		    tellstick_drv:change_device(NewDevice);
 	       true ->
@@ -487,7 +504,8 @@ handle_call({reload, File}, _From,
 
 	    power_on(Nid, ItemsToAdd),
 	    power_off(Nid, ItemsToRemove),
-	    {reply, ok, Ctx#ctx {items = NewItems, device = NewDevice}};
+	    {reply, ok, Ctx#ctx {items = NewItems, events=Events,
+				 device = NewDevice}};
 	Error ->
 	    {reply, Error, Ctx}
     end;
@@ -547,10 +565,13 @@ handle_call({new_co_node, NewCoNode}, _From, Ctx=#ctx {co_node = OldCoNode}) ->
 
 handle_call(dump, _From, 
 	    Ctx=#ctx {co_node = CoNode, device = Device, 
-		      node_id = {Type,Nid}, items = Items}) ->
+		      node_id = {Type,Nid}, 
+		      events = Events,
+		      items = Items}) ->
     io:format("Ctx: CoNode = ~p, Device = ~p,", [CoNode, Device]),
     io:format("NodeId = {~p, ~.16#}, Items=\n", [Type, Nid]),
     lists:foreach(fun(Item) -> print_item(Item) end, Items),
+    lists:foreach(fun(Evt) -> print_event(Evt) end, Events),
     {reply, ok, Ctx};
 
 handle_call({debug, TrueOrFalse}, _From, Ctx) ->
@@ -671,6 +692,37 @@ handle_info({analog_input, Rid, Rchan, Value},
 	    {noreply, Ctx#ctx { items = NewItems }}
     end;
 
+handle_info({tellstick_event,_Ref,EventData}, Ctx) ->
+    ?dbg(?SERVER,"handle_info: event ~p\n.",[EventData]),
+    case take_event(EventData, Ctx#ctx.events) of
+	false ->
+	    ?dbg(?SERVER,"handle_info: tellstick_event, event ~p not found", 
+		 [EventData]),
+	    {noreply,Ctx};
+	E ->
+	    Data = <<(E#event.value):32/little>>,
+	    case E#event.type of
+		digital ->
+		    co_api:notify(E#event.rid, ?MSG_DIGITAL,
+				  E#event.rchan, Data),
+		    {noreply,Ctx};
+%%		    handle_notify(E#event.rid, ?MSG_DIGITAL,
+%%				  E#event.rchan, E#event.value);
+		analog ->
+		    co_api:notify(E#event.rid, ?MSG_ANALOG,
+				  E#event.rchan, Data),
+		    {noreply,Ctx};
+%%		    handle_notify(E#event.rid, ?MSG_ANALOG,
+%%				  E#event.rchan, E#event.value);
+		encoder ->
+		    co_api:notify(E#event.rid, ?MSG_ENCODER,
+				  E#event.rchan, Data),
+		    {noreply,Ctx}
+%%		    handle_notify(E#event.rid, ?MSG_ENCODER,
+%%				  E#event.rchan, E#event.value)
+	    end
+    end;
+
 handle_info({'EXIT', _Pid, co_node_terminated}, Ctx) ->
     ?dbg(?SERVER,"handle_info: co_node terminated.",[]),
     {stop, co_node_terminated, Ctx};   
@@ -748,15 +800,33 @@ take_item(_Rid, _Rchan, [],_Acc) ->
     false.
 
 
+take_event(Event, [E=#event { event=Pattern }|Ts]) ->
+    case match_event(Pattern, Event) of
+	true -> E;
+	false -> take_event(Event, Ts)
+    end;
+take_event(_Event, []) ->
+    false.
+
+match_event([{K,V}|Kvs], Event) ->
+    case lists:keytake(K, 1, Event) of
+	{value,{K,V},Event1} -> match_event(Kvs,Event1);
+	_ -> false
+    end;
+match_event([], _Event) ->
+    true.
+	    
+
+
 %% Load configuration file
 load_config(File) ->
     case file:consult(File) of
 	{ok, Cs} ->
-	    load_conf(Cs,#conf{},[]);
+	    load_conf(Cs,#conf{},[],[]);
 	Error -> Error
     end.
 
-load_conf([C | Cs], Conf, Items) ->
+load_conf([C | Cs], Conf, Is, Ts) ->
     case C of
 	{Rid,Rchan,Type,Unit,Chan,Flags} ->
 	    RCobId = translate(Rid),
@@ -766,37 +836,54 @@ load_conf([C | Cs], Conf, Items) ->
 			   active=false, level=0 },
 	    case verify_item(Item) of
 		ok ->
-		    load_conf(Cs, Conf, [Item | Items]);
+		    load_conf(Cs, Conf, [Item | Is], Ts);
 		{error, Reason} ->
-		    error_logger:error_msg(
+		    lager:error(
 		      "Inconsistent item ~p, could not be loaded, reason ~p\n", 
 		      [Item, Reason]),
-		    load_conf(Cs, Conf, Items)
+		    load_conf(Cs, Conf, Is, Ts)
+	    end;
+	{event, Event, {Rid,RChan,Type,Value}} ->
+	    RCobId = translate(Rid),
+	    Item = #event { event = Event,
+			    rid   = RCobId,
+			    rchan = RChan,
+			    type  = Type,
+			    value = Value },
+	    case verify_event(Item) of
+		ok ->
+		    load_conf(Cs, Conf, Is, [Item | Ts]);
+		{error, Reason} ->
+		    lager:error(
+		      "Inconsistent item ~p, could not be loaded, reason ~p\n", 
+		      [Item, Reason]),
+		    load_conf(Cs, Conf, Is,Ts)
 	    end;
 	{product,Product1} ->
-	    load_conf(Cs, Conf#conf { product=Product1}, Items);
+	    load_conf(Cs, Conf#conf { product=Product1}, Is, Ts);
 	{device,Name,Version} ->
-	    load_conf(Cs, Conf#conf { device={Name, Version}}, Items);
+	    load_conf(Cs, Conf#conf { device={Name, Version}}, Is, Ts);
 	{device,Name} ->
 	    %% Use default version
-	    load_conf(Cs, Conf#conf { device={Name, ?DEF_VERSION}}, Items);
+	    load_conf(Cs, Conf#conf { device={Name, ?DEF_VERSION}}, Is, Ts);
 	_ ->
 	    {error, {unknown_config, C}}
     end;
-load_conf([], Conf, Items) ->
+load_conf([], Conf, Is, Ts) ->
     case get(dbg) of
 	true ->
-	    error_logger:info_msg("Loaded configuration: \n ",[]),
-	    lists:foreach(fun(Item) -> print_item(Item) end, Items);
+	    lager:error("Loaded configuration: \n ",[]),
+	    lists:foreach(fun(I) -> print_item(I) end, Is),
+	    lists:foreach(fun(E) -> print_event(E) end, Ts);
 	_Other ->
 	    do_nothing
     end,
     if Conf#conf.product =:= undefined ->
 	    {error, no_product};
        true ->
-	    {ok, Conf#conf {items=Items}}
+	    {ok, Conf#conf {items=Is,events=Ts}}
     end.
-    
+
 verify_item(_I=#item {type = Type, unit = Unit, lchan = Channel, flags = Flags}) ->
     case verify_unit_range(Type, Unit) of
 	ok ->
@@ -815,6 +902,57 @@ verify_item(_I=#item {type = Type, unit = Unit, lchan = Channel, flags = Flags})
 	{error, _Reason} = N ->
 	    N
     end.
+
+verify_event(_I=#event {event=Event, 
+			rid   = _RCobId,
+			rchan = RChan,
+			type  = Type,
+			value = Value }) ->
+    verify_all(
+      [fun() -> (RChan >= 1) andalso (RChan =< 254) end,
+       {error,bad_channel_number},
+
+       fun() -> case Type of
+		    analog -> true;
+		    digital -> true;
+		    encoder -> true;
+		    _ -> false
+		end
+       end, {error, bad_channel_type},
+
+       fun() -> case Type of
+		    analog when Value >= 0, Value =< 16#ffff ->
+			true;
+		    digital when Value =:= 0; Value =:= 1 ->
+			true;
+		    encoder -> is_integer(Value);
+		    _ -> false
+		end
+       end, {error, bad_value_range},
+
+       fun() -> verify_event(Event, [protocol,model,data]) end,
+       {error, bad_event}
+
+      ]).
+
+verify_all([Fun, Error | More]) ->
+    try Fun() of
+	true -> verify_all(More);
+	false -> Error
+    catch
+	error:_ -> Error
+    end;
+verify_all([]) ->
+    ok.
+
+verify_event(Event, [K|Ks]) ->
+    Event1 = lists:keydelete(K, 1, Event),
+    verify_event(Event1, Ks);
+verify_event([], _) ->
+    true;
+verify_event(_, []) ->
+    false.
+
 
 verify_unit_range(nexa, Unit) 
   when Unit >= $A,
@@ -1134,13 +1272,19 @@ call(Type, Args) ->
     end.
     
     
-print_item(Item) ->
+print_item(Item) when is_record(Item,item) ->
     io:format("Item = {Rid = ~.16#, Rchan = ~p, Type = ~p, Unit = ~p, Chan = ~p, "
 	      "Active = ~p, Level = ~p, Flags = ",
 	      [Item#item.rid, Item#item.rchan, 
 	       Item#item.type,Item #item.unit, Item#item.lchan, 
 	       Item#item.active, Item#item.level]),
     print_flags(Item#item.flags).
+
+print_event(E) when is_record(E, event) ->
+    io:format("Event: {~p, Rid:~.16#, Rchan:~w,Type:~w,value:~w }\n", 
+	      [E#event.event,E#event.rid,E#event.rchan, E#event.type,
+	       E#event.value]).
+
 
 print_flags([]) ->
     io:format("}\n");

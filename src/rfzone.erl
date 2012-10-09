@@ -76,8 +76,23 @@ stop(_State) ->
     exit(stopped).
 
 start() ->
-    application:start(eapi),
-    application:start(sl),
-    application:start(can),
-    application:start(canopen),
-    application:start(rfzone).
+    start_em([lager,rfzone]).
+
+start_em([App|Apps]) ->
+    %% io:format("Start: ~p\n", [App]),
+    case application:start(App) of
+	{error,{not_started,App1}} ->
+	    start_em([App1,App|Apps]);
+	{already_started,App} ->
+	    start_em(Apps);
+	ok ->
+	    start_em(Apps);
+	Error ->
+	    Error
+    end;
+start_em([]) ->
+    ok.
+
+
+
+
