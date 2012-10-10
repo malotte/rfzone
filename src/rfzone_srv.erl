@@ -724,6 +724,7 @@ handle_info({tellstick_event,_Ref,EventData}, Ctx) ->
 	    end
     end;
 handle_info({timeout,Ref,inhibit}, Ctx) ->
+    ?dbg(?SERVER,"handle_info: inhibit timer done.", []),
     %% inhibit period is overl unlock item
     case lists:keytake(Ref, #item.inhibit, Ctx#ctx.items) of
 	{value,I,Is} ->
@@ -1260,6 +1261,7 @@ digital_input_int(I, Nid, Is, Value) ->
     end.
 
 digital_input_call(I, _Nid, Is, true) when I#item.inhibit =/= undefined ->
+    ?dbg(?SERVER,"digital_input: inhibited.",[]),
     [I|Is];   %% not allowed to turn on yet
 digital_input_call(I, Nid, Is, Active) -> 
     ?dbg(?SERVER,"digital_input: calling driver.",[]),
@@ -1271,9 +1273,11 @@ digital_input_call(I, Nid, Is, Active) ->
 	    case proplists:get_value(inhibit, I#item.flags, 0) of
 		0 ->
 		    [I#item { active=Active} | Is];
-		T ->
+		T when Active ->
 		    TRef = erlang:start_timer(T, self(), inhibit),
-		    [I#item { active=Active, inhibit=TRef} | Is]
+		    [I#item { active=Active, inhibit=TRef} | Is];
+		_ ->
+		    [I#item { active=Active} | Is]
 	    end;
 	_Error ->
 	    [I | Is]
@@ -1342,9 +1346,10 @@ encoder_input_int(_Nid, I, Is, _Value) ->
     [I|Is].
 
 run(email,[_Unit,{_From,_To,_Headers,_Body},false,_Style,_Flags]) ->
+    ?dbg(?SERVER,"run email: state false, not sending.",[]),
     ok;  %% do not send
 run(email,[_Unit,{From,To,Headers,Body},true,_Style,Flags]) ->
-    %% protect from sending more than one time per ...
+    ?dbg(?SERVER,"run email: sending to ~p",[To]),
     %% fixme: setup callback and log failed attempts
     Flags1 = Flags -- [digital,springback],
     Headers1 = 
