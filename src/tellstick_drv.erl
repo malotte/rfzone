@@ -30,8 +30,6 @@
 
 -include_lib("lager/include/log.hrl").
 
-%% -define(dbg(_Tag, F, A), lager:debug((F),(A))).
-
 %% API
 -export([start_link/1, 
 	 stop/0,
@@ -92,7 +90,8 @@
 	  queue,          %% request queue
 	  reply_timer,    %% timeout waiting for reply
 	  retry_timer,    %% retry open port timeout
-	  subs = []       %% #subscription{}
+	  subs = [],      %% #subscription{}
+	  trace           %% debug tracing
 	}).
 
 -define(TELLSTICK_SEND,  $S).       %% param byte...
@@ -366,13 +365,8 @@ command(C) ->
 		  {stop, Reason::term()}.
 
 init(Opts) ->
+    {ok,Trace} = set_trace(proplists:get_bool(debug, Opts), undefined),
     lager:info("~p: init: args = ~p,\n pid = ~p\n", [?MODULE, Opts, self()]),
-    case proplists:get_bool(debug, Opts) of
-	true ->
-	    lager:set_loglevel(lager_console_backend, debug);
-	_ ->
-	    ok
-    end,
     Device = 
 	case proplists:lookup(device, Opts) of
 	    none ->
@@ -387,7 +381,10 @@ init(Opts) ->
 	    {device,Dev={simulated,v2}} -> Dev
 	end,
     RetryTimeout = proplists:get_value(retry_timeout, Opts, infinity),
-    S = #ctx { device=Device, retry_timer = RetryTimeout, queue=queue:new() },
+    S = #ctx { device = Device, 
+	       retry_timer = RetryTimeout, 
+	       queue = queue:new(),
+	       trace = Trace },
     case open(S) of
 	{ok, S1} -> {ok, S1};
 	Error -> {stop, Error}
@@ -508,13 +505,12 @@ handle_call({change_device, Device={_DeviceName, _Version}}, _From, Ctx) ->
     end;
 
 handle_call({debug, On}, _From, Ctx) ->
-    %% FIXME: add trace point? yes!
-    if On ->
-	    lager:set_loglevel(lager_console_backend, debug);
-       true ->
-	    lager:set_loglevel(lager_console_backend, none)
-    end,
-    {reply, ok, Ctx};
+    case set_trace(On, Ctx#ctx.trace) of
+	{ok,Trace} ->
+	    {reply, ok, Ctx#ctx { trace = Trace }};
+	Error ->
+	    {reply, Error, Ctx}
+    end;
 
 handle_call(stop, _From, Ctx) ->
     {stop, normal, ok, Ctx};
@@ -647,6 +643,7 @@ handle_info(_Info, Ctx) ->
 		       ok.
 
 terminate(_Reason, Ctx) ->
+    stop_trace(Ctx#ctx.trace),
     close(Ctx),
     ok.
 
@@ -666,6 +663,23 @@ code_change(_OldVsn, Ctx, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+stop_trace(undefined) ->
+    undefined;
+stop_trace(Trace) ->
+    lager:stop_trace(Trace),
+    undefined.
+
+%% enable/disable module debug trace
+set_trace(false, Trace) ->
+    Trace1 = stop_trace(Trace),
+    lager:set_loglevel(lager_console_backend, info),
+    {ok,Trace1};
+set_trace(true, undefined) ->
+    lager:trace_console([{module,?MODULE}], debug);
+set_trace(true, Trace) -> 
+    {ok,Trace}.
+
 
 next_command(Ctx) ->
     case queue:out(Ctx#ctx.queue) of
