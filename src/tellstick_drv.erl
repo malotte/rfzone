@@ -83,13 +83,15 @@
 -record(ctx, 
 	{
 	  uart,           %% serial port descriptor
-	  device,         %% device string and version
+	  device,         %% device string
+	  variant,        %% stick/duo/net | v1|v2|v3|simulated
 	  version,        %% tellstick(duo) version
 	  command,        %% last command
 	  client,         %% last client
 	  queue,          %% request queue
 	  reply_timer,    %% timeout waiting for reply
-	  retry_timer,    %% retry open port timeout
+	  reopen_ival,    %% interval betweem open retry 
+	  reopen_timer,   %% timer ref
 	  subs = [],      %% #subscription{}
 	  trace           %% debug tracing
 	}).
@@ -367,22 +369,23 @@ command(C) ->
 init(Opts) ->
     {ok,Trace} = set_trace(proplists:get_bool(debug, Opts), undefined),
     lager:info("~p: init: args = ~p,\n pid = ~p\n", [?MODULE, Opts, self()]),
-    Device = 
+    {Device,Variant} = 
 	case proplists:lookup(device, Opts) of
 	    none ->
 		case os:getenv("TELLSTICK_DEVICE") of
-		    false -> simulated;
+		    false -> {"",v1};
 		    EnvDevice -> {EnvDevice, v1}
 		end;
 	    {device,PropDev} when is_list(PropDev) -> {PropDev,v1};
 	    {device,Dev={DeviceName,v1}} when is_list(DeviceName) -> Dev;
 	    {device,Dev={DeviceName,v2}} when is_list(DeviceName) -> Dev;
-	    {device,Dev={simulated,v1}} -> Dev;
-	    {device,Dev={simulated,v2}} -> Dev
+	    {device,{simulated,v1}} -> {"",v1};
+	    {device,{simulated,v2}} -> {"",v2}
 	end,
-    RetryTimeout = proplists:get_value(retry_timeout, Opts, infinity),
+    Reopen_ival = proplists:get_value(retry_timeout, Opts, infinity),
     S = #ctx { device = Device, 
-	       retry_timer = RetryTimeout, 
+	       variant=Variant,
+	       reopen_ival = Reopen_ival,
 	       queue = queue:new(),
 	       trace = Trace },
     case open(S) of
@@ -390,15 +393,14 @@ init(Opts) ->
 	Error -> {stop, Error}
     end.
 	    
-open(Ctx=#ctx {device = {simulated, _Version} }) ->
+open(Ctx=#ctx {device = ""}) ->
     lager:debug("TELLSTICK open: simulated\n", []),
     {ok, Ctx#ctx { uart=simulated, version="0" }};
 
-open(Ctx=#ctx {device = {DeviceName, Version}, retry_timer = RetryTimeout }) ->
-
-    %% Only 4800 possible for tellstick v1 ...
-    Speed = case Version of
-		v1 -> 4800;
+open(Ctx=#ctx {device = DeviceName, variant=Variant,
+	       reopen_ival = Reopen_ival }) ->
+    Speed = case Variant of
+		v1 -> 4800; %% Only 4800 possible for tellstick v1 ...
 		v2 -> 9600
 	    end,
     Options = [{baud,Speed},{mode,list},{active,true},{packet,line},
@@ -410,14 +412,15 @@ open(Ctx=#ctx {device = {DeviceName, Version}, retry_timer = RetryTimeout }) ->
 	    {ok, Ctx#ctx { uart=U }};
 	{error, E} when E == eaccess;
 			E == enoent ->
-	    if RetryTimeout == infinity ->
+	    if Reopen_ival == infinity ->
 		    lager:debug("open: Driver not started, reason = ~p.\n", [E]),
 		    {error, E};
 	       true ->
 		    lager:debug("open: Port could not be opened, will try again "
-			 "in ~p millisecs.\n", [RetryTimeout]),
-		    erlang:send_after(RetryTimeout, self(), retry),
-		    {ok, Ctx}
+			 "in ~p millisecs.\n", [Reopen_ival]),
+		    Reopen_timer = erlang:start_timer(Reopen_ival,
+						      self(), open_device),
+		    {ok, Ctx#ctx { reopen_timer = Reopen_timer }}
 	    end;
 	    
 	Error ->
@@ -620,6 +623,26 @@ handle_info({uart,U,Data},  Ctx) when U =:= Ctx#ctx.uart ->
 	    lager:debug("handle_info: reply ~p", [Data]),
 	    {noreply, Ctx}
     end;
+handle_info({uart_error,U,Reason}, Ctx) when U =:= Ctx#ctx.uart ->
+    if Reason =:= enxio ->
+	    lager:error("uart error ~p device ~s unplugged?", 
+			[Reason,Ctx#ctx.device]);
+       true ->
+	    lager:error("uart error ~p for device ~s", 
+			[Reason,Ctx#ctx.device])
+    end,
+    {noreply, Ctx};
+handle_info({uart_closed,U}, Ctx) when U =:= Ctx#ctx.uart ->
+    uart:close(U),
+    lager:error("uart close device ~s will retry", [Ctx#ctx.device]),
+    Reopen_timer = erlang:start_timer(Ctx#ctx.reopen_ival,
+				      self(), open_device),
+    {noreply, Ctx#ctx { uart=undefined,reopen_timer = Reopen_timer }};
+
+handle_info({timeout,Ref,open_device}, Ctx) when Ctx#ctx.reopen_timer =:= Ref ->
+    Ctx1 = open(Ctx#ctx { reopen_timer = undefined} ),
+    {noreply, Ctx1};
+
 handle_info({'DOWN',Ref,process,_Pid,_Reason},Ctx) ->
     lager:debug("handle_info: subscriber ~p terminated: ~p", 
 	 [_Pid, _Reason]),

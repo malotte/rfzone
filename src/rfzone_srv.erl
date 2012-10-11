@@ -96,8 +96,9 @@
 
 	  %% State
 	  active = false,  %% off
-	  inhibit,         %% filter activation events
 	  level = 0,       %% dim level
+
+	  inhibit,         %% filter activation events
 	  timer            %% To filter analog input
 	}).
 
@@ -523,7 +524,7 @@ handle_call({item_configuration, RemoteId, Channel} = _X, _From,
 	false ->
 	    {reply, {error, no_such_item}, Ctx};
 	{value,Item,_OtherItems} ->
-	    {reply, {ok, format(Item)}, Ctx}
+	    {reply, {ok, bert_format(Item)}, Ctx}
     end;
 
 handle_call({configure_item, RemoteId, Channel, Config} = _X, _From, 
@@ -546,7 +547,7 @@ handle_call({configure_item, RemoteId, Channel, Config} = _X, _From,
 handle_call(device_configuration, _From, 
 	    Ctx=#ctx {device = Device}) ->
     lager:debug("handle_call: received device_configuration req.",[]),
-    {reply, {ok, format(Device)}, Ctx};
+    {reply, {ok, bert_format(Device)}, Ctx};
 
 handle_call({configure_device, NewDevice} = _X, _From, 
 	    Ctx=#ctx {device = OldDevice}) ->
@@ -1366,20 +1367,53 @@ encoder_input_int(_Nid, I, Is, _Value) ->
     lager:debug("encoder_input_int: Not implemented yet.",[]),
     [I|Is].
 
-run(email,[_Unit,{_From,_To,_Headers,_Body},false,_Style,_Flags]) ->
+run(email,[_Unit,_Chan,false,_Style,_Flags]) ->
     lager:debug("run email: state false, not sending.",[]),
     ok;  %% do not send
-run(email,[_Unit,{From,To,Headers,Body},true,_Style,Flags]) ->
-    lager:debug("run email: sending to ~p",[To]),
+run(email,[_Unit,_Chan,true,_Style,Flags]) ->
+    Sender = proplists:get_value(sender, Flags),
+    Recipients = proplists:get_value(recipients, Flags),
+    Body = proplists:get_value(body, Flags),
+    lager:debug("run email: sending to ~p",[Recipients]),
     %% fixme: setup callback and log failed attempts
-    Flags1 = Flags -- [digital,springback],
+    Flags1 = lists:foldl(fun(F,Fs) -> proplists:delete(F, Fs) end, 
+			 Flags,
+			 [digital,springback,inhibit,
+			  sender,recipients,
+			  from,to,subject,body
+			 ]),
+    From = case proplists:get_value(from, Flags) of
+	       undefined -> [];
+	       F1 -> [["From: ", F1]]
+	   end,
+    To = case proplists:get_value(to, Flags) of
+	     undefined -> [];
+	     F3 -> [["To: ", F3]]
+	 end,
+    Subject = case proplists:get_value(subject, Flags) of
+		  undefined -> [];
+		  F2 -> [["Subject: ", F2]]
+	      end,
+    Date = case proplists:get_value(date, Flags, true) of
+	       true ->
+		   [["Date: ", smtp_util:rfc5322_timestamp()]];
+	       false ->
+		   [];
+	       Date1 when is_list(Date1) -> [["Date: ", Date1]]
+	   end,
+    MessageID = case proplists:get_value(message_id, Flags, true) of
+		    true ->
+			[["Message-ID:", smtp_util:generate_message_id()]];
+		    false ->
+			[];
+		    MID ->
+			[["Message-ID:", MID]]
+		end,
     Headers1 = 
 	[ [H,"\r\n"] || 
-	    H <- Headers ++ 
-		[["Date: ", smtp_util:rfc5322_timestamp()],
-		 ["Message-ID:", smtp_util:generate_message_id()]]],
+	    H <- From ++ To ++ Subject ++ Date ++ MessageID ],
     Message = [Headers1,"\r\n",Body],
-    case gen_smtp_client:send({From, To, Message}, Flags1) of
+    case gen_smtp_client:send({Sender, Recipients, Message}, Flags1) of
 	{ok,_Pid} ->
 	    ok;
 	Error -> Error
@@ -1468,12 +1502,14 @@ flags([{_Key, _Value} = Flag | Rest], Flags) ->
 flags(_Other, _Flags) ->
     error.
 
-format({simulated, _Version}) ->
+bert_format({simulated, _Version}) ->
     [{'tellstick-device', simulated}];
-format({Device, Version}) ->
+bert_format({Device, Version}) ->
     [{'tellstick-device', Device}, {version, Version}];
-format(_I=#item{rid = RemoteId, rchan = RChannel, active = Active, type = Type,
-		unit = Unit, lchan = DeviceChannel, flags = Flags, level = Level}) ->
+bert_format(_I=#item{rid = RemoteId, rchan = RChannel, 
+		     active = Active, type = Type,
+		     unit = Unit, lchan = DeviceChannel,
+		     flags = Flags, level = Level}) ->
     Common = [{'remote-id', 
 	       [{'type-of-cobid', xcobid},
 		{'function-code',pdo1_tx},
@@ -1482,18 +1518,23 @@ format(_I=#item{rid = RemoteId, rchan = RChannel, active = Active, type = Type,
 	      {state, if Active == true -> on; Active == false -> off end},
 	      {protocol, Type},
 	      {channel, DeviceChannel},
-	      {flags, format(Flags,[])}],
+	      {flags, bert_format_flags(Flags)}],
     DevChan = if Type == sartano -> []; true -> [{unit, Unit}] end,
     Lev = case lists:member(analog, Flags) of
 	      false -> [];
 	      true -> [{level, Level}]
 	  end,
     Common ++ DevChan ++ Lev.
-format([], Acc) -> Acc;
-format([{_Key, _Value} = Flag | Rest], Acc) -> 
-    format(Rest, [Flag | Acc]);
-format([Key | Rest], Acc) -> 
-    format(Rest, [{Key, true} | Acc]).
+
+bert_format_flags(Flags) ->
+    bert_format_flags(Flags, []).
+
+bert_format_flags([{Key, _Value} = Flag | Rest], Acc) when is_atom(Key) -> 
+    bert_format_flags(Rest, [Flag | Acc]);
+bert_format_flags([Key | Rest], Acc) when is_atom(Key) -> 
+    bert_format_flags(Rest, [{Key, true} | Acc]);
+bert_format_flags([], Acc) -> Acc.
+
 		      
 stop_timer(undefined) ->
     undefined;

@@ -178,8 +178,8 @@ module rfzone {
 
 	  leaf remote-channel {
 	    description "Channel in remote control application.";
-	    type uint16 {
-	      range "0 .. 127";
+	    type uint8 {
+	      range "1 .. 254";
 	    }
 	    mandatory true;
 	  }
@@ -198,13 +198,13 @@ module rfzone {
 	      uses digital-control;
 	      leaf unit {
 		description "Local unit";
-		type uint16 {
+		type uint8 {
 		  range "65 .. 80"; //$A - $P
 		}
 	      }
 	      leaf channel {
 		description "Local channel.";
-		type uint16 {
+		type uint8 {
 		  range "1 ..16";
 		}
 	      }
@@ -222,7 +222,7 @@ module rfzone {
 	      }
 	      leaf channel {
 		description "Local channel.";
-		type uint16 {
+		type uint8 {
 		  range "1 ..16";
 		}
 	      }
@@ -233,13 +233,13 @@ module rfzone {
 	      uses digital-control;
 	      leaf unit {
 		description "Local unit";
-		type uint16 {
+		type uint8 {
 		  range "65 .. 80"; //$A - $P
 		}
 	      }
 	      leaf channel {
 		description "Local channel.";
-		type uint16 {
+		type uint8 {
 		  range "1 ..16";
 		}
 	      }
@@ -289,6 +289,12 @@ module rfzone {
 		  range "1 ..4"; 
 		}
 	      }
+	    }
+
+	    container email {
+		description "Email protocol.";
+		uses digital-control;
+		
 	    }
 
 	  } // end protocol
