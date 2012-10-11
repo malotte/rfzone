@@ -60,6 +60,7 @@
 %% Testing
 -export([debug/1, 
 	 dump/0]).
+-export([rid_translate/1]).
 
 -define(SERVER, ?MODULE). 
 
@@ -273,13 +274,13 @@ analog_input(RemoteId, Channel, Level)
 digital_input(RemoteId, Channel, Action) 
   when is_integer(RemoteId) andalso
        is_integer(Channel) andalso
-       (Action == on orelse Action == off) ->
+       (Action =:= on orelse Action =:= off) ->
     gen_server:cast(?SERVER, {digital_input, RemoteId, Channel, 
-			      if Action == on -> 1; Action == off -> 0 end});
+			      if Action =:= on -> 1; Action =:= off -> 0 end});
 digital_input(RemoteId, Channel, Action) 
   when is_integer(RemoteId) andalso
        is_integer(Channel) andalso
-       Action == onoff -> %% Springback
+       Action =:= onoff -> %% Springback
     gen_server:cast(?SERVER, {digital_input, RemoteId, Channel, 1}).
 
 %%--------------------------------------------------------------------
@@ -840,7 +841,7 @@ load_config(File) ->
 load_conf([C | Cs], Conf, Is, Ts) ->
     case C of
 	{Rid,Rchan,Type,Unit,Chan,Flags} ->
-	    RCobId = translate(Rid),
+	    RCobId = rid_translate(Rid),
 	    Item = #item { rid=RCobId, rchan=Rchan, 
 			   type=Type, unit=Unit, 
 			   lchan=Chan, flags=Flags,
@@ -855,7 +856,7 @@ load_conf([C | Cs], Conf, Is, Ts) ->
 		    load_conf(Cs, Conf, Is, Ts)
 	    end;
 	{event, Event, {Rid,RChan,Type,Value}} ->
-	    RCobId = translate(Rid),
+	    RCobId = rid_translate(Rid),
 	    Item = #event { event = Event,
 			    rid   = RCobId,
 			    rchan = RChan,
@@ -1139,9 +1140,9 @@ verify_flags(_Type, [_Flag | _Flags]) ->
 		   [_Type, _Flag]),
     {error, invalid_type_flag_combination}.
 
-translate({xcobid, Func, Nid}) ->
+rid_translate({xcobid, Func, Nid}) ->
     ?XCOB_ID(co_lib:encode_func(Func), Nid);
-translate({cobid, Func, Nid}) ->
+rid_translate({cobid, Func, Nid}) ->
     ?COB_ID(co_lib:encode_func(Func), Nid).
 
 power_on(Nid, ItemsToAdd) ->
