@@ -416,8 +416,8 @@ open(Ctx=#ctx {device = DeviceName, variant=Variant,
 		    lager:debug("open: Driver not started, reason = ~p.\n", [E]),
 		    {error, E};
 	       true ->
-		    lager:debug("open: Port could not be opened, will try again "
-			 "in ~p millisecs.\n", [Reopen_ival]),
+		    lager:debug("open: uart could not be opened, will try again"
+				" in ~p millisecs.\n", [Reopen_ival]),
 		    Reopen_timer = erlang:start_timer(Reopen_ival,
 						      self(), reopen),
 		    {ok, Ctx#ctx { reopen_timer = Reopen_timer }}
@@ -637,9 +637,8 @@ handle_info({uart_closed,U}, Ctx) when U =:= Ctx#ctx.uart ->
 	Error -> {stop, Error, Ctx}
     end;
 
-handle_info({timeout,Ref,open_device}, Ctx) when Ctx#ctx.reopen_timer =:= Ref ->
-    Ctx1 = open(Ctx#ctx { reopen_timer = undefined} ),
-    case open(Ctx#ctx { uart=undefined}) of
+handle_info({timeout,Ref,reopen}, Ctx) when Ctx#ctx.reopen_timer =:= Ref ->
+    case open(Ctx#ctx { uart=undefined, reopen_timer=undefined}) of
 	{ok, Ctx1} -> {noreply, Ctx1};
 	Error -> {stop, Error, Ctx}
     end;
