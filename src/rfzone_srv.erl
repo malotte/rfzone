@@ -732,7 +732,7 @@ handle_info({tellstick_event,_Ref,EventData}, Ctx) ->
 	    end
     end;
 handle_info({timeout,Ref,inhibit}, Ctx) ->
-    ?dbg(?SERVER,"handle_info: inhibit timer done.", []),
+    lager:debug("handle_info: inhibit timer done.", []),
     %% inhibit period is overl unlock item
     case lists:keytake(Ref, #item.inhibit, Ctx#ctx.items) of
 	{value,I,Is} ->
@@ -1282,7 +1282,7 @@ digital_input_int(I, Nid, Is, Value) ->
     end.
 
 digital_input_call(I, _Nid, Is, true) when I#item.inhibit =/= undefined ->
-    ?dbg(?SERVER,"digital_input: inhibited.",[]),
+    lager:debug("digital_input: inhibited.",[]),
     [I|Is];   %% not allowed to turn on yet
 digital_input_call(I, Nid, Is, Active) -> 
     lager:debug("digital_input: calling driver.",[]),
@@ -1367,10 +1367,10 @@ encoder_input_int(_Nid, I, Is, _Value) ->
     [I|Is].
 
 run(email,[_Unit,{_From,_To,_Headers,_Body},false,_Style,_Flags]) ->
-    ?dbg(?SERVER,"run email: state false, not sending.",[]),
+    lager:debug("run email: state false, not sending.",[]),
     ok;  %% do not send
 run(email,[_Unit,{From,To,Headers,Body},true,_Style,Flags]) ->
-    ?dbg(?SERVER,"run email: sending to ~p",[To]),
+    lager:debug("run email: sending to ~p",[To]),
     %% fixme: setup callback and log failed attempts
     Flags1 = Flags -- [digital,springback],
     Headers1 = 
@@ -1427,10 +1427,10 @@ fmt_flags([Flag|Tail]) ->
 fmt_flags([]) -> "".
 
   
-encode(on) -> ?MSG_POWER_ON;
-encode(off) -> ?MSG_POWER_OFF;
+encode(on)      -> ?MSG_POWER_ON;
+encode(off)     -> ?MSG_POWER_OFF;
 encode(digital) -> ?MSG_DIGITAL;
-encode(analog) -> ?MSG_ANALOG;
+encode(analog)  -> ?MSG_ANALOG;
 encode(encoder) -> ?MSG_ENCODER.
      
 item([], Item) ->
