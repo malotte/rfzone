@@ -58,6 +58,7 @@
 %% Testing
 -export([debug/1, 
 	 dump/0]).
+-export([rid_translate/1]).
 
 -define(SERVER, ?MODULE). 
 
@@ -272,13 +273,13 @@ analog_input(RemoteId, Channel, Level)
 digital_input(RemoteId, Channel, Action) 
   when is_integer(RemoteId) andalso
        is_integer(Channel) andalso
-       (Action == on orelse Action == off) ->
+       (Action =:= on orelse Action =:= off) ->
     gen_server:cast(?SERVER, {digital_input, RemoteId, Channel, 
-			      if Action == on -> 1; Action == off -> 0 end});
+			      if Action =:= on -> 1; Action =:= off -> 0 end});
 digital_input(RemoteId, Channel, Action) 
   when is_integer(RemoteId) andalso
        is_integer(Channel) andalso
-       Action == onoff -> %% Springback
+       Action =:= onoff -> %% Springback
     gen_server:cast(?SERVER, {digital_input, RemoteId, Channel, 1}).
 
 %%--------------------------------------------------------------------
@@ -731,6 +732,7 @@ handle_info({tellstick_event,_Ref,EventData}, Ctx) ->
 	    end
     end;
 handle_info({timeout,Ref,inhibit}, Ctx) ->
+    ?dbg(?SERVER,"handle_info: inhibit timer done.", []),
     %% inhibit period is overl unlock item
     case lists:keytake(Ref, #item.inhibit, Ctx#ctx.items) of
 	{value,I,Is} ->
@@ -864,7 +866,7 @@ load_config(File) ->
 load_conf([C | Cs], Conf, Is, Ts) ->
     case C of
 	{Rid,Rchan,Type,Unit,Chan,Flags} ->
-	    RCobId = translate(Rid),
+	    RCobId = rid_translate(Rid),
 	    Item = #item { rid=RCobId, rchan=Rchan, 
 			   type=Type, unit=Unit, 
 			   lchan=Chan, flags=Flags,
@@ -879,7 +881,7 @@ load_conf([C | Cs], Conf, Is, Ts) ->
 		    load_conf(Cs, Conf, Is, Ts)
 	    end;
 	{event, Event, {Rid,RChan,Type,Value}} ->
-	    RCobId = translate(Rid),
+	    RCobId = rid_translate(Rid),
 	    Item = #event { event = Event,
 			    rid   = RCobId,
 			    rchan = RChan,
@@ -1158,9 +1160,9 @@ verify_flags(_Type, [_Flag | _Flags]) ->
 		   [_Type, _Flag]),
     {error, invalid_type_flag_combination}.
 
-translate({xcobid, Func, Nid}) ->
+rid_translate({xcobid, Func, Nid}) ->
     ?XCOB_ID(co_lib:encode_func(Func), Nid);
-translate({cobid, Func, Nid}) ->
+rid_translate({cobid, Func, Nid}) ->
     ?COB_ID(co_lib:encode_func(Func), Nid).
 
 power_on(Nid, ItemsToAdd) ->
@@ -1280,6 +1282,7 @@ digital_input_int(I, Nid, Is, Value) ->
     end.
 
 digital_input_call(I, _Nid, Is, true) when I#item.inhibit =/= undefined ->
+    ?dbg(?SERVER,"digital_input: inhibited.",[]),
     [I|Is];   %% not allowed to turn on yet
 digital_input_call(I, Nid, Is, Active) -> 
     lager:debug("digital_input: calling driver.",[]),
@@ -1291,9 +1294,11 @@ digital_input_call(I, Nid, Is, Active) ->
 	    case proplists:get_value(inhibit, I#item.flags, 0) of
 		0 ->
 		    [I#item { active=Active} | Is];
-		T ->
+		T when Active ->
 		    TRef = erlang:start_timer(T, self(), inhibit),
-		    [I#item { active=Active, inhibit=TRef} | Is]
+		    [I#item { active=Active, inhibit=TRef} | Is];
+		_ ->
+		    [I#item { active=Active} | Is]
 	    end;
 	_Error ->
 	    [I | Is]
@@ -1362,9 +1367,10 @@ encoder_input_int(_Nid, I, Is, _Value) ->
     [I|Is].
 
 run(email,[_Unit,{_From,_To,_Headers,_Body},false,_Style,_Flags]) ->
+    ?dbg(?SERVER,"run email: state false, not sending.",[]),
     ok;  %% do not send
 run(email,[_Unit,{From,To,Headers,Body},true,_Style,Flags]) ->
-    %% protect from sending more than one time per ...
+    ?dbg(?SERVER,"run email: sending to ~p",[To]),
     %% fixme: setup callback and log failed attempts
     Flags1 = Flags -- [digital,springback],
     Headers1 = 
