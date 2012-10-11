@@ -419,7 +419,7 @@ open(Ctx=#ctx {device = DeviceName, variant=Variant,
 		    lager:debug("open: Port could not be opened, will try again "
 			 "in ~p millisecs.\n", [Reopen_ival]),
 		    Reopen_timer = erlang:start_timer(Reopen_ival,
-						      self(), open_device),
+						      self(), reopen),
 		    {ok, Ctx#ctx { reopen_timer = Reopen_timer }}
 	    end;
 	    
@@ -583,20 +583,17 @@ handle_cast(_Msg, Ctx) ->
 %% @end
 %%--------------------------------------------------------------------
 -type info()::
-	retry |
-	{Port::term(), {data, Data::binary()}} |
-	term() .
+	{uart, U::port(), Data::binary()} |
+	{uart_error, U::port(), Reason::term()} |
+	{uart_closed, U::port()} |
+	{timeout, reference(), reply} |
+	{timeout, reference(), reopen} |
+	{'DOWN',Ref::reference(),process,pid(),Reason::term()}.
 
 -spec handle_info(Info::info(), Ctx::#ctx{}) -> 
 			 {noreply, Ctx::#ctx{}} |
 			 {stop, Reason::term(), Ctx::#ctx{}}.
 
-handle_info(retry, Ctx) ->
-    lager:debug("handle_info: retry open port", []),
-    case open(Ctx) of
-	{ok, Ctx1} -> {noreply, Ctx1};
-	Error -> {stop, Error, Ctx}
-    end;
 handle_info({timeout,TRef,reply}, 
 	    Ctx=#ctx {client=Client, reply_timer=TRef}) ->
     lager:debug("handle_info: timeout waiting for port", []),
@@ -635,13 +632,17 @@ handle_info({uart_error,U,Reason}, Ctx) when U =:= Ctx#ctx.uart ->
 handle_info({uart_closed,U}, Ctx) when U =:= Ctx#ctx.uart ->
     uart:close(U),
     lager:error("uart close device ~s will retry", [Ctx#ctx.device]),
-    Reopen_timer = erlang:start_timer(Ctx#ctx.reopen_ival,
-				      self(), open_device),
-    {noreply, Ctx#ctx { uart=undefined,reopen_timer = Reopen_timer }};
+    case open(Ctx#ctx { uart=undefined}) of
+	{ok, Ctx1} -> {noreply, Ctx1};
+	Error -> {stop, Error, Ctx}
+    end;
 
 handle_info({timeout,Ref,open_device}, Ctx) when Ctx#ctx.reopen_timer =:= Ref ->
     Ctx1 = open(Ctx#ctx { reopen_timer = undefined} ),
-    {noreply, Ctx1};
+    case open(Ctx#ctx { uart=undefined}) of
+	{ok, Ctx1} -> {noreply, Ctx1};
+	Error -> {stop, Error, Ctx}
+    end;
 
 handle_info({'DOWN',Ref,process,_Pid,_Reason},Ctx) ->
     lager:debug("handle_info: subscriber ~p terminated: ~p", 
