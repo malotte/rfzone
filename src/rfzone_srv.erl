@@ -123,6 +123,7 @@
 	  trace
 	}).
 
+
 %% For dialyzer
 -type start_options()::{co_node, CoNode::node_identity()} |
 		       {config, File::string()} |
@@ -917,12 +918,10 @@ load_conf([], Conf, Is, Ts) ->
 	    {ok, Conf#conf {items=Is,events=Ts}}
     end.
 
-verify_item(_I=#item {type = email, unit = _Unit, lchan = Email, flags = Opts}) ->
-    case verify_mail(Email) of
-	ok -> 
-	    verify_mail_options(Opts);
-	Error -> Error
-    end;    
+verify_item(_I=#item {type = email, unit = _Unit, lchan = _Lchan,
+		      flags = Opts}) ->
+    %% unit & lchan may be anything right now
+    verify_mail_options(Opts);
 
 verify_item(_I=#item {type = Type, unit = Unit, lchan = Channel, flags = Flags}) ->
     case verify_unit_range(Type, Unit) of
@@ -975,30 +974,91 @@ verify_event(_I=#event {event=Event,
 
       ]).
 
-verify_mail({From,To,Headers,Body}) ->
-    L = lists:flatten(
-	  [ [fun() -> verify_addr(From) end, {error,bad_from_addr}],
-	    [ [ fun() -> verify_addr(T) end, {error,bad_from_addr} ] ||
-		T <- To ],
-	    [fun() -> try iolist_size([Headers,Body]) of
-			  _ -> true
-		      catch
-			  error:_ ->
-			       false
-		      end
-	     end, {error, bad_mail_body}]]),
-    verify_all(L).
 
-%% form <name@host.com>
-%%       name@host.com
-verify_addr(Name) when is_binary(Name) ->
-    verify_addr(binary_to_list(Name));
-verify_addr([$<|Addr1]) ->
+
+verify_mail_option(inhibit,Value) ->   
+    is_inhibit_value(Value);
+verify_mail_option(sender,Value) ->    
+    is_mail_address(Value);
+verify_mail_option(recipients,Vs) ->
+    lists:all(fun(A) -> is_mail_address(A) end, Vs);
+verify_mail_option(subject,Value) ->
+    is_string(Value);
+verify_mail_option(from,Value) ->
+    is_string(Value);
+verify_mail_option(to,Value) ->
+    is_string(Value);
+verify_mail_option(date,Value) ->
+    is_boolean(Value) orelse is_string(Value);
+verify_mail_option(message_id,Value) ->
+    is_boolean(Value) orelse is_string(Value);
+verify_mail_option(body,Value) ->
+    is_string(Value);
+verify_mail_option(relay,Value) ->
+    is_address(Value);
+verify_mail_option(auth,Value) ->
+    is_string(Value);
+verify_mail_option(username,Value) ->
+    is_string(Value);
+verify_mail_option(password,Value) ->
+    is_string(Value);
+verify_mail_option(no_mx_lookups,Value) ->
+    is_boolean(Value);
+verify_mail_option(retries,Value) ->
+    if is_integer(Value), Value >= 0 ->
+	    true;
+       true -> false
+    end;
+verify_mail_option(tls,Value) ->
+    is_boolean(Value);
+verify_mail_option(ssl,Value) ->
+    is_boolean(Value);
+verify_mail_option(port,Value) ->
+    if is_integer(Value), Value > 0, Value =< 16#ffff ->
+	    true;
+       true -> false
+    end;
+verify_mail_option(digital,Value) ->
+    is_boolean(Value);
+verify_mail_option(springback,Value) ->
+    is_boolean(Value);
+verify_mail_option(_,_) ->
+    unknown.
+
+verify_mail_option(digital) -> true;
+verify_mail_option(springback) -> true;
+verify_mail_option(_) -> unknown.
+
+
+verify_mail_options([{K,V}|Opts]) ->
+    case verify_mail_option(K,V) of
+	false -> {error, {K, bad_value}};
+	true -> verify_mail_options(Opts);
+	unknown -> {error,{unknown_option, K}}
+    end;
+verify_mail_options([K|Opts]) ->
+    case verify_mail_option(K) of
+	true -> verify_mail_options(Opts);
+	unknown -> {error,{unknown_option, K}}
+    end;
+verify_mail_options([]) ->
+    ok.
+
+is_string(Value) ->	
+    try iolist_size(Value) of
+	_ -> true
+    catch
+	error:_ -> false
+    end.
+
+is_mail_address(Name) when is_binary(Name) ->
+    is_mail_address(binary_to_list(Name));
+is_mail_address([$<|Addr1]) ->
     case lists:reverse(Addr1) of
-	[$>|Addr2] -> verify_addr(lists:reverse(Addr2));
+	[$>|Addr2] -> is_mail_address(lists:reverse(Addr2));
 	_ -> false
     end;
-verify_addr(Addr) when is_list(Addr) ->
+is_mail_address(Addr) when is_list(Addr) ->
     case string:tokens(Addr, "@") of
 	[_Name, Host] ->
 	    case inet_parse:domain(Host) of
@@ -1013,32 +1073,60 @@ verify_addr(Addr) when is_list(Addr) ->
 	    end;
 	_ -> false
     end;
-verify_addr(_) ->
+is_mail_address(_) ->
     false.
 
-verify_mail_options([{K,_V}|Opts]) ->
-    case K of
-	inhibit -> verify_mail_options(Opts);
-	relay    -> verify_mail_options(Opts);
-	auth     -> verify_mail_options(Opts);
-	username -> verify_mail_options(Opts);
-	password -> verify_mail_options(Opts);
-	no_mx_lookups -> verify_mail_options(Opts);
-	retries -> verify_mail_options(Opts);
-	tls -> verify_mail_options(Opts);
-	ssl -> verify_mail_options(Opts);
-	port -> verify_mail_options(Opts);
-	_ -> {error, {unknown_option, K}}
-    end;
-verify_mail_options([K|Opts]) ->
-    case K of
-	digital    -> verify_mail_options(Opts);
-	springback -> verify_mail_options(Opts);
-	_ ->  {error, {unknown_option, K}}
-    end;
-verify_mail_options([]) ->
-    ok.
-	
+%% max inhibit is about 37 hours!
+is_inhibit_value(Value) when
+      is_integer(Value), Value > 0, Value =< 16#7FFFFFF ->
+    true;
+is_inhibit_value(_) ->
+    false.
+
+is_address(Value) ->
+    is_domain_name(Value) orelse
+	is_ip_string(Value) orelse
+	is_ip_address(Value).
+
+is_domain_name(Value) ->
+    inet_parse:domain(Value).
+
+is_ip_string(Value) ->
+    is_ipv4_string(Value) orelse
+	is_ipv6_string(Value).
+
+is_ipv4_string(Value) ->	
+    try inet_parse:ipv4_address(Value) of
+	{ok,_} -> true;
+	{error,einval} -> false
+    catch
+	error:_ -> false
+    end.
+
+is_ipv6_string(Value) ->
+    try inet_parse:ipv6_address(Value) of
+	{ok,_} -> true;
+	{error,einval} -> false
+    catch
+	error:_ -> false
+    end.
+
+is_ip_address(Addr) ->	
+    is_ipv4_addr(Addr) orelse
+	is_ipv6_addr(Addr).
+
+is_ipv4_addr({A,B,C,D}) 
+  when (A bor B bor C bor D) band (bnot 16#ff) =:= 0 ->
+    true;
+is_ipv4_addr(_) ->
+    false.
+
+is_ipv6_addr({A,B,C,D,E,F,G,H}) 
+  when (A bor B bor C bor D bor E bor F bor G bor H) 
+       band (bnot 16#ffff) =:= 0 ->
+    true;
+is_ipv6_addr(_) ->
+    false.
 	    
 
 verify_all([Fun, Error | More]) ->
@@ -1153,7 +1241,7 @@ verify_flags(nexax = Type, [{analog_min, Min} | Flags])
 verify_flags(nexax = Type, [{analog_max, Max} | Flags]) 
   when Max >= 0, Max =< 255 ->
     verify_flags(Type, Flags);
-verify_flags(Type, [{inhib,Time} | Flags])
+verify_flags(Type, [{inhibit,Time} | Flags])
   when is_integer(Time), Time >= 0 ->
     verify_flags(Type, Flags);
 verify_flags(_Type, [_Flag | _Flags]) ->
