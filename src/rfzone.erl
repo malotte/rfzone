@@ -36,6 +36,8 @@
 %% Shortcut API
 -export([start/0]).
 
+-include_lib("lager/include/log.hrl").
+
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -56,7 +58,7 @@
 		   {error, Reason::term()}.
 
 start(_StartType, _StartArgs) ->
-    error_logger:info_msg("~p: start: arguments ignored.\n", [?MODULE]),
+    lager:info("start: arguments ignored.\n", []),
     Opts = case application:get_env(options) of
 	       undefined -> [];
 	       {ok, O} -> O

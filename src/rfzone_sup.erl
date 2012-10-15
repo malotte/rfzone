@@ -33,6 +33,8 @@
 %% Supervisor callbacks
 -export([init/1]).
 
+-include_lib("lager/include/log.hrl").
+
 %% ===================================================================
 %% API functions
 %% ===================================================================
@@ -50,13 +52,13 @@
 			{error, Error::term()}.
 
 start_link(Args) ->
-    error_logger:info_msg("~p: start_link: args = ~p\n", [?MODULE, Args]),
+    lager:info("start_link: args = ~p\n", [Args]),
     case supervisor:start_link({local, ?MODULE}, ?MODULE, Args) of
 	{ok, Pid} ->
 	    {ok, Pid, {normal, Args}};
 	Error -> 
-	    error_logger:error_msg("~p: start_link: Failed to start process, "
-				   "reason ~p\n",  [?MODULE, Error]),
+	    lager:error("start_link: Failed to start process, "
+			"reason ~p\n",  [Error]),
 	    Error
     end.
 
@@ -76,11 +78,11 @@ stop(_StartArgs) ->
 %% ===================================================================
 %% @private
 init(TArgs) ->
-    error_logger:info_msg("~p: init: args = ~p,\n pid = ~p\n", [?MODULE, TArgs, self()]),
+    lager:info("init: args = ~p,\n pid = ~p\n", [TArgs, self()]),
     I = rfzone_srv,
-    Opts = proplists:get_value(options, TArgs, []),	    
+    Opts = proplists:get_value(options, TArgs, []),
     Rfzone = {I, {I, start_link, [Opts]}, permanent, 5000, worker, [I]},
  
-    error_logger:info_msg("~p: About to start ~p\n", [?MODULE,Rfzone]),
+    lager:info("about to start ~p\n", [Rfzone]),
     {ok, { {one_for_one, 0, 300}, [Rfzone]} }.
 

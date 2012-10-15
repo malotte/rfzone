@@ -70,6 +70,10 @@
 	 version/0,
 	 setopt/1,
 	 command/1]).
+%% generate rf code utils
+-export([rf_code_hl/4, rf_code_hl/3]).
+-export([rf_code_lh/4, rf_code_lh/3]).
+-export([send_pulses/1]).
 
 -define(SERVER, ?MODULE). 
 
@@ -349,6 +353,10 @@ setopt(O={_Option, _Value}) ->
 command(C) ->
     gen_server:cast(?SERVER, {command,C}).
 
+%% send pulse data
+send_pulses(PulseData) ->
+    gen_server:call(?SERVER, {send_pulses,PulseData}).
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -497,6 +505,9 @@ handle_call({ikea,System,Channel,Level,Style},From,Ctx) ->
 handle_call({risingsun,Code,Unit,On},From,Ctx) ->
     command(risingsun_command, [Code,Unit,On], Ctx#ctx {client = From});
 
+handle_call({send_pulses,PulsData}, From, Ctx) ->
+    command_pulse_data(PulsData, Ctx#ctx { client = From });
+
 handle_call({change_device, Device={_DeviceName, _Version}}, _From, Ctx) ->
     lager:debug("handle_call: change device to ~p", [Device]),
     close(Ctx),
@@ -522,29 +533,34 @@ handle_call(_Request, _From, Ctx) ->
     {reply, {error,bad_call}, Ctx}.
 
 
-command(F, Args, Ctx=#ctx {uart = U, client = _Client}) when U =/= undefined ->
+
+command(F, Args, Ctx=#ctx { client = _Client}) ->
     try apply(?MODULE, F, Args) of
 	PulseData ->
-	    case send_command(U, PulseData) of
-		{ok,Command1} ->
-		    lager:debug("command: sent ~p, client ~p", 
-			 [Command1,_Client]),
-		    %% Wait for confirmation
-		    TRef = erlang:start_timer(3000, self(), reply),
-		    {noreply,Ctx#ctx {command = Command1, reply_timer = TRef}};
-		{simulated, ok} ->
-		    {reply, ok, Ctx};
-		Other ->
-		    lager:debug("command: send failed, reason ~p", [Other]),
-		    {reply, Other, Ctx}
-	    end
+	    command_pulse_data(PulseData, Ctx)
     catch
 	error:Reason ->
 	    {reply, {error,Reason}, Ctx}
+    end.
+
+command_pulse_data(PulseData, Ctx=#ctx { uart=U }) when U =/= undefined ->
+    case send_pulses_(U, PulseData) of
+	{ok,Command1} ->
+	    lager:debug("command: sent ~p, client ~p", 
+			[Command1,Ctx#ctx.client]),
+	    %% Wait for confirmation
+	    TRef = erlang:start_timer(3000, self(), reply),
+	    {noreply,Ctx#ctx {command = Command1, reply_timer = TRef}};
+	{simulated, ok} ->
+	    {reply, ok, Ctx};
+	Other ->
+	    lager:debug("command: send failed, reason ~p", [Other]),
+	    {reply, Other, Ctx}
     end;
-command(_F, _Args, Ctx) ->
+command_pulse_data(_PulseData, Ctx) ->
     lager:info("~p: No port defined yet.\n", [?MODULE]),
     {reply, {error,no_port}, Ctx}.
+    
 
 %%--------------------------------------------------------------------
 %% @private
@@ -969,6 +985,9 @@ risingsun_rf_code(Code, N) ->
 
 
 %% rf_code_lh build send list b(0) ... b(n-1)
+rf_code_lh(Code, B0, B1) ->
+    rf_code_lh(Code, 8, B0, B1).
+
 rf_code_lh(_Bits, 0, _B0, _B1) ->  
     [];
 rf_code_lh(Bits, I, B0, B1) ->
@@ -979,6 +998,9 @@ rf_code_lh(Bits, I, B0, B1) ->
     end.
 
 %% rf_code_hl build send list b(n-1) ... b(0)
+rf_code_hl(Code, B0, B1) ->
+    rf_code_hl(Code, 8, B0, B1).
+
 rf_code_hl(_Code, 0, _B0, _B1) ->
     [];
 rf_code_hl(Code, I, B0, B1) ->
@@ -998,10 +1020,10 @@ reverse_bits_(Bits, I, RBits) ->
     reverse_bits_(Bits bsr 1, I-1, (RBits bsl 1) bor (Bits band 1)).
 
 
-send_command(simulated, _Data) ->
+send_pulses_(simulated, _Data) ->
     lager:debug("send_command: Sending data =~p\n", [_Data]),
     {simulated, ok};
-send_command(U, Data) ->
+send_pulses_(U, Data) ->
     Data1 = ascii_data(Data),
     N = length(Data1),
     Command = 
