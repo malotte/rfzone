@@ -440,9 +440,8 @@ start_device(Args, Device) ->
 %% Handling call messages.
 %% Request can be the following:
 %% <ul>
-%% <li> {get, Index, SubInd} - Returns the value for Index:SubInd.</li>
-%% <li> {set, Index, SubInd, Value} - Sets the value for Index:SubInd.</li>
 %% <li> reload - Reloads the configuration file.</li>
+%% <li> new_co_node - Switch of CANopen node.</li>
 %% <li> dump - Writes loop data to standard out (for debugging).</li>
 %% <li> debug - Turns on/off debug output. </li>
 %% <li> stop - Stops the application.</li>
