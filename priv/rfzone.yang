@@ -6,9 +6,10 @@
 module rfzone {
 
     namespace "http://rogvall.se/ns/rfzone";
-    prefix ts;
+    prefix rfz;
 
     import uart { prefix uart; }
+    import ietf-inet-types { prefix inet; }
 
     organization
 	"Rogvall Invest AB";
@@ -41,6 +42,7 @@ module rfzone {
 	  leaf springback {
 	    description "Springs back ;-)";
 	    type boolean;
+	    default false;
 	  }
     } // end digital-control
 
@@ -76,8 +78,72 @@ module rfzone {
 	  }
 	}
       }
-	
     } // end analog-control
+
+
+    grouping smtp-config {
+	
+	leaf relay {
+	    description "name of the SMTP sending MTA";
+	    type inet:host;
+	}
+	  
+	leaf auth {
+	    description "do SMPT authentication, supported methods are
+		   CRAM-MD5, LOGIN, PLAIN";
+	    type enumeration {
+		enum never;
+		enum always;
+		enum if_available;
+	    }
+	    default if_available;
+	}
+
+	leaf username {
+	    description "username used in authentication";
+	    type string;
+	}
+	
+	leaf password {
+	    description "pasword used in authentication";
+	    type string;
+	}
+
+	leaf no_mx_lookups {
+	    description "Relay directly to relay host";
+	    type boolean;
+	}
+
+	leaf retries {
+	    description "How many retries per smtp host on temporary failure";
+	    type uint32;
+	    default 1;
+	}
+
+	leaf tls {
+	    description "When to start tls";
+	    type enumeration {
+		enum never;
+		enum always;
+		enum if_available;
+	    }
+	    default if_available;
+	}
+	
+	leaf ssl {
+	    description "whether to connect on 465 in ssl mode";
+	    type boolean;
+	    default false;
+	}
+	
+	leaf port {
+	    description "SMTP port number";
+	    type uint16 {
+		range "1 .. 65535";
+	    }
+	}
+    } // end smtp-config
+
 
     grouping remote-id {
 
@@ -293,8 +359,45 @@ module rfzone {
 
 	    container email {
 		description "Email protocol.";
+		uses smtp-config;
 		uses digital-control;
-		
+
+		leaf sender {
+		    type string;
+		    mandatory true;
+		}
+
+		leaf-list recipients {
+		    type string;
+		    min-elements 1;
+		}
+
+		leaf subject {
+		    type string;
+		}
+
+		leaf from {
+		    type string;
+		}
+
+		leaf to {
+		    type string;		    
+		}
+
+		leaf date {
+		    description "Generate Date";
+		    type boolean;
+		}
+
+		leaf message_id {
+		    description "Generate Message-ID";
+		    type boolean;
+		}
+
+		leaf body {
+		    description "Email message body";
+		    type string;
+		}
 	    }
 
 	  } // end protocol
