@@ -119,16 +119,16 @@ turn_on_off(_Config) ->
     %% Springback requires on and off
     ct:pal("Turning on", []),
     co_api:notify({xnodeid, ct:get_config(source_node)}, 
-		  pdo1_tx, 16#6000, 9, <<1:32/little>>),
+		  pdo1_tx, 16#6000, 11, <<1:32/little>>),
     co_api:notify({xnodeid, ct:get_config(source_node)}, 
-		  pdo1_tx, 16#6000, 9, <<0:32/little>>),
+		  pdo1_tx, 16#6000, 11, <<0:32/little>>),
     %% How verify ??
     timer:sleep(500),
     ct:pal("Turning off", []),
     co_api:notify({xnodeid, ct:get_config(source_node)}, 
-		  pdo1_tx, 16#6000, 9, <<1:32/little>>),
+		  pdo1_tx, 16#6000, 11, <<1:32/little>>),
     co_api:notify({xnodeid, ct:get_config(source_node)}, 
-		  pdo1_tx, 16#6000, 9, <<0:32/little>>),
+		  pdo1_tx, 16#6000, 11, <<0:32/little>>),
     %% How verify ??
     timer:sleep(500),
     ct:pal("Ready", []),
