@@ -48,9 +48,7 @@ serial() ->
 
 init() ->
     Serial = serial(),
-    can_router:start(),
-    can_udp:start(rfzone_test, 0),
-    {ok, _PPid} = co_proc:start_link([{linked, false}]),
+    prepare(),
     {ok, _NPid} = co_api:start_link(Serial, 
 				    [{linked, false},
 				     {use_serial_as_xnodeid, true},
@@ -63,9 +61,7 @@ init() ->
 
 start() ->
     Serial = serial(),
-    can_router:start(),
-    can_udp:start(rfzone_test, 0),
-    {ok, _PPid} = co_proc:start_link([{linked, false}]),
+    prepare(),
     {ok, _NPid} = co_api:start_link(Serial, 
 				     [{linked, false},
 				      {name, co_rfzone},
@@ -78,12 +74,24 @@ start() ->
     
     {ok, _BPid} = bert_rpc_exec:start().
 
+prepare() ->
+    %% Start everything needed
+    application:start(sasl),
+    %%application:start(lager),
+    lager:start(),
+    application:start(ale),
+    can_router:start(),
+    can_udp:start(0),
+    {ok, _PPid} = co_proc:start_link([{linked, false}]).
+
 stop() ->
     Serial = serial(),
     co_api:stop(Serial),
     co_proc:stop(),
-    can_udp:stop(rfzone_test),
+    can_udp:stop(0),
     can_router:stop(),
+    application:stop(ale),    
+    application:stop(lager),    
     io:format("Stop bert server manually\n",[]).
 
 start_rfzone() ->
