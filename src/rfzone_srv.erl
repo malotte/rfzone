@@ -963,7 +963,7 @@ verify_app_started(App) ->
 	true ->
 	    ok;
 	false ->
-	    {error, gpio_not_runnning}
+	    {error, list_to_atom(atom_to_list(App) ++ "_not_runnning")}
     end.
 
 verify_event(_I=#event {event = Event, 
