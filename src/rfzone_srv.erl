@@ -922,7 +922,17 @@ verify_item(_I=#item {type = email, unit = _Unit, lchan = _Lchan,
     %% unit & lchan may be anything right now
     verify_mail_options(Opts);
 
-verify_item(_I=#item {type = Type, unit = Unit, lchan = Channel, flags = Flags}) ->
+verify_item(I=#item {type = gpio}) ->
+    case verify_general(I) of
+	ok ->
+	    verify_gpio();
+	E -> E
+    end;
+
+verify_item(I=#item {}) ->
+    verify_general(I).
+ 
+verify_general(_I=#item {type = Type, unit = Unit, lchan = Channel, flags = Flags}) ->
     case verify_unit_range(Type, Unit) of
 	ok ->
 	    case verify_channel_range(Type, Channel) of
@@ -941,7 +951,15 @@ verify_item(_I=#item {type = Type, unit = Unit, lchan = Channel, flags = Flags})
 	    N
     end.
 
-verify_event(_I=#event {event=Event, 
+verify_gpio() ->
+    case lists:keymember(gpio, 1, application:which_applications()) of
+	true ->
+	    ok;
+	false ->
+	    {error, gpio_not_runnning}
+    end.
+
+verify_event(_I=#event {event = Event, 
 			rid   = _RCobId,
 			rchan = RChan,
 			type  = Type,
@@ -968,7 +986,13 @@ verify_event(_I=#event {event=Event,
 		end
        end, {error, bad_value_range},
 
-       fun() -> verify_event(Event, [protocol,model,data]) end,
+       fun() -> case lists:member({protocol, gpio}, Event) of
+		    true ->
+			verify_event(Event, [protocol,board,pin_reg,pin,data]);
+		    false ->
+			verify_event(Event, [protocol,model,data]) 
+		end
+       end,
        {error, bad_event}
 
       ]).
@@ -1169,6 +1193,10 @@ verify_unit_range(risingsun, Unit)
   when Unit >= 1,
        Unit =< 4 ->
     ok;
+verify_unit_range(gpio, PinReg) 
+  when PinReg >= 0,
+       PinReg =< 1 ->
+    ok;
 verify_unit_range(_Type, _Unit) ->
     lager:debug("verify_unit_range: invalid type/unit combination ~p,~p", 
 		   [_Type, _Unit]),
@@ -1195,8 +1223,12 @@ verify_channel_range(ikea, Channel)
        Channel =< 10 ->
     ok;
 verify_channel_range(risingsun, Channel)
-  when Channel >= 1,
+  when Channel >= 0,
        Channel =< 4 ->
+    ok;
+verify_channel_range(gpio, Pin)
+  when Pin >= 1,
+       Pin =< 255 -> 
     ok;
 verify_channel_range(_Type, _Channel) ->
     lager:debug("verify_channel_range: invalid type/channel combination ~p,~p", 
@@ -1212,7 +1244,8 @@ verify_flags(Type, [digital | Flags])
        Type == waveman;
        Type == sartano;
        Type == ikea;
-       Type == risingsun ->
+       Type == risingsun;
+       Type == gpio ->
     verify_flags(Type, Flags);
 verify_flags(Type, [springback | Flags]) 
   when Type == nexa;
@@ -1240,6 +1273,13 @@ verify_flags(nexax = Type, [{analog_min, Min} | Flags])
 verify_flags(nexax = Type, [{analog_max, Max} | Flags]) 
   when Max >= 0, Max =< 255 ->
     verify_flags(Type, Flags);
+verify_flags(gpio = Type, [{board,Board} | Flags])
+  when Board == cpu ->
+    verify_flags(Type, Flags);
+verify_flags(gpio, [{board,Board} | _Flags])
+  when Board == piface;
+       Board == canopen ->
+    {error, not_supported_board};
 verify_flags(Type, [{inhibit,Time} | Flags])
   when is_integer(Time), Time >= 0 ->
     verify_flags(Type, Flags);
@@ -1259,13 +1299,25 @@ power_on(Nid, ItemsToAdd) ->
 power_off(Nid, ItemsToRemove) ->
     power_command(Nid, ?MSG_OUTPUT_DEL, ItemsToRemove).
 
-power_command(Nid, Cmd, Items) ->
-    lists:foreach(
-      fun(I) ->
-	      Value = ((I#item.rid bsl 8) bor I#item.rchan) band 16#ffffffff, %% ??
-	      notify(Nid, pdo1_tx, Cmd, I#item.rchan, Value)
-      end,
-      Items).
+power_command(_Nid, _Cmd, []) ->
+    ok;
+power_command(Nid, Cmd, [I | Items]) ->
+    Value = ((I#item.rid bsl 8) bor I#item.rchan) band 16#ffffffff, %% ??
+    notify(Nid, pdo1_tx, Cmd, I#item.rchan, Value),
+    init_if_gpio(Cmd, I),
+    power_command(Nid, Cmd, Items).
+
+init_if_gpio(?MSG_OUTPUT_ADD, 
+	     _I=#item {type = gpio, unit = PinReg, lchan = Pin, flags = Flags}) ->
+    case proplists:get_value(board, Flags, cpu) of
+	cpu -> 
+	    gpio:init(PinReg, Pin);
+	_Board ->
+	    lager:debug("init_gpio_port: not supported board ~p",[_Board])
+    end;
+init_if_gpio(_Cmd, _I) -> %% Release case ??
+    ok.
+
 
 reset_items(Items) ->
     lists:foreach(
@@ -1505,6 +1557,12 @@ run(email,[_Unit,_Chan,true,_Style,Flags]) ->
 	    ok;
 	Error -> Error
     end;
+run(gpio, [PinReg,Pin,true,_Style,_Flags] ) ->
+    lager:debug("action: gpio, set PinReg = ~w, Pin = ~p.", [PinReg,Pin]),
+    gpio:set(PinReg,Pin);
+run(gpio, [PinReg,Pin,false,_Style,_Flags] ) ->
+    lager:debug("action: gpio, clear PinReg = ~w, Pin = ~p.", [PinReg,Pin]),
+    gpio:clr(PinReg,Pin);
 run(Type, [Unit,Chan,Active,Style,_Flags]) ->
     Args = [Unit,Chan,Active,Style],
     lager:debug("action: Type = ~p, Args = ~w.", [Type, Args]),

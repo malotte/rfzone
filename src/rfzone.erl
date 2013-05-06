@@ -30,11 +30,14 @@
 
 
 %% Application API
--export([start/2, 
+-export([start/2,
 	 stop/1]).
 
 %% Shortcut API
 -export([start/0]).
+
+%% Rfzone with exoport API
+-export([start_exo/0]).
 
 -include_lib("lager/include/log.hrl").
 
@@ -79,6 +82,26 @@ stop(_State) ->
 
 start() ->
     start_em([lager,rfzone]).
+
+start_exo() ->
+    Apps = [crypto, public_key, exo, bert, gproc, kvdb],
+    start_em(Apps),
+    error_logger:info_msg("Started support apps ~p", [Apps]),
+    application:load(exoport),
+    SetUps = case application:get_env(exoport, '$setup_hooks') of
+	       undefined -> [];
+	       {ok, List} -> List
+	     end,
+    error_logger:info_msg("exoport setup hooks ~p", [SetUps]),
+    [erlang:apply(M,F,A) || {_Phase, {M, F, A}} <- SetUps],
+    error_logger:info_msg("exoport setup hooks executed.", []),
+    start_em([exoport]),
+    error_logger:info_msg("Started exoport", []),
+    start_em([lager, canopen, rfzone]),
+    ok.
+
+
+
 
 start_em([App|Apps]) ->
     %% io:format("Start: ~p\n", [App]),
