@@ -922,17 +922,24 @@ verify_item(_I=#item {type = email, unit = _Unit, lchan = _Lchan,
     %% unit & lchan may be anything right now
     verify_mail_options(Opts);
 
-verify_item(I=#item {type = gpio}) ->
+verify_item(I=#item {type = gpio, flags = Flags}) ->
     case verify_general(I) of
 	ok ->
-	    verify_gpio();
+	    case verify_app_started(gpio) of
+		ok ->
+		    case proplists:get_value(board, Flags) of
+			piface -> verify_app_started(spi);
+			_Other -> ok
+		    end;
+		E -> E
+	    end;
 	E -> E
     end;
 
 verify_item(I=#item {}) ->
     verify_general(I).
  
-verify_general(_I=#item {type = Type, unit = Unit, lchan = Channel, flags = Flags}) ->
+verify_general(I=#item {type = Type, unit = Unit, lchan = Channel, flags = Flags}) ->
     case verify_unit_range(Type, Unit) of
 	ok ->
 	    case verify_channel_range(Type, Channel) of
@@ -940,7 +947,7 @@ verify_general(_I=#item {type = Type, unit = Unit, lchan = Channel, flags = Flag
 		    Analog = proplists:get_bool(analog, Flags),
 		    Digital = proplists:get_bool(digital, Flags),
 		    if Analog orelse Digital ->
-			    verify_flags(Type, Flags);
+			    verify_flags(Type, Flags, I);
 		       true ->
 			    {error, must_be_digital_or_analog}
 		    end;
@@ -951,8 +958,8 @@ verify_general(_I=#item {type = Type, unit = Unit, lchan = Channel, flags = Flag
 	    N
     end.
 
-verify_gpio() ->
-    case lists:keymember(gpio, 1, application:which_applications()) of
+verify_app_started(App) ->
+    case lists:keymember(App, 1, application:which_applications()) of
 	true ->
 	    ok;
 	false ->
@@ -1236,9 +1243,9 @@ verify_channel_range(_Type, _Channel) ->
     {error, invalid_type_channel_combination}.
 
 
-verify_flags(_Type, []) ->
+verify_flags(_Type, [], _I) ->
     ok;
-verify_flags(Type, [digital | Flags]) 
+verify_flags(Type, [digital | Flags], I) 
   when Type == nexa;
        Type == nexax;
        Type == waveman;
@@ -1246,44 +1253,49 @@ verify_flags(Type, [digital | Flags])
        Type == ikea;
        Type == risingsun;
        Type == gpio ->
-    verify_flags(Type, Flags);
-verify_flags(Type, [springback | Flags]) 
+    verify_flags(Type, Flags, I);
+verify_flags(Type, [springback | Flags], I) 
   when Type == nexa;
        Type == waveman;
        Type == sartano;
        Type == risingsun ->
-    verify_flags(Type, Flags);
-verify_flags(Type, [analog | Flags]) 
+    verify_flags(Type, Flags, I);
+verify_flags(Type, [analog | Flags], I) 
   when Type == nexax;
        Type == ikea ->
-    verify_flags(Type, Flags);
-verify_flags(ikea = Type, [{analog_min, Min} | Flags]) 
+    verify_flags(Type, Flags, I);
+verify_flags(ikea = Type, [{analog_min, Min} | Flags], I) 
   when Min >= 0, Min =< 10 ->
-    verify_flags(Type, Flags);
-verify_flags(ikea = Type, [{analog_max, Max} | Flags]) 
+    verify_flags(Type, Flags, I);
+verify_flags(ikea = Type, [{analog_max, Max} | Flags], I) 
   when Max >= 0, Max =< 10 ->
-    verify_flags(Type, Flags);
-verify_flags(ikea = Type, [{style, Style} | Flags]) 
+    verify_flags(Type, Flags, I);
+verify_flags(ikea = Type, [{style, Style} | Flags], I) 
   when Style == smooth;
        Style == instant ->
-    verify_flags(Type, Flags);
-verify_flags(nexax = Type, [{analog_min, Min} | Flags]) 
+    verify_flags(Type, Flags, I);
+verify_flags(nexax = Type, [{analog_min, Min} | Flags], I) 
   when Min >= 0, Min =< 255 ->
-    verify_flags(Type, Flags);
-verify_flags(nexax = Type, [{analog_max, Max} | Flags]) 
+    verify_flags(Type, Flags, I);
+verify_flags(nexax = Type, [{analog_max, Max} | Flags], I) 
   when Max >= 0, Max =< 255 ->
-    verify_flags(Type, Flags);
-verify_flags(gpio = Type, [{board,Board} | Flags])
-  when Board == cpu ->
-    verify_flags(Type, Flags);
-verify_flags(gpio, [{board,Board} | _Flags])
-  when Board == piface;
-       Board == canopen ->
+    verify_flags(Type, Flags, I);
+verify_flags(gpio = Type, [{board, cpu} | Flags], I) ->
+    verify_flags(Type, Flags, I);
+verify_flags(gpio = Type, [{board, piface} | Flags], 
+	     I=#item {unit = 0, lchan = Pin}) 
+  when Pin >= 0,
+       Pin =< 7 ->
+    verify_flags(Type, Flags, I);
+verify_flags(gpio = Type, [{board, piface} | _Flags], _I)  ->
+    {error, invalid_board_pin_combination};
+verify_flags(gpio, [{board,Board} | _Flags], _I)
+  when Board == canopen ->
     {error, not_supported_board};
-verify_flags(Type, [{inhibit,Time} | Flags])
+verify_flags(Type, [{inhibit,Time} | Flags], I)
   when is_integer(Time), Time >= 0 ->
-    verify_flags(Type, Flags);
-verify_flags(_Type, [_Flag | _Flags]) ->
+    verify_flags(Type, Flags, I);
+verify_flags(_Type, [_Flag | _Flags], _I) ->
     lager:debug("verify_flags: invalid type/flag combination ~p,~p", 
 		   [_Type, _Flag]),
     {error, invalid_type_flag_combination}.
@@ -1312,6 +1324,8 @@ init_if_gpio(?MSG_OUTPUT_ADD,
     case proplists:get_value(board, Flags, cpu) of
 	cpu -> 
 	    gpio:init(PinReg, Pin);
+	piface ->
+	    ok;
 	_Board ->
 	    lager:debug("init_gpio_port: not supported board ~p",[_Board])
     end;
@@ -1557,12 +1571,32 @@ run(email,[_Unit,_Chan,true,_Style,Flags]) ->
 	    ok;
 	Error -> Error
     end;
-run(gpio, [PinReg,Pin,true,_Style,_Flags] ) ->
-    lager:debug("action: gpio, set PinReg = ~w, Pin = ~p.", [PinReg,Pin]),
-    gpio:set(PinReg,Pin);
-run(gpio, [PinReg,Pin,false,_Style,_Flags] ) ->
-    lager:debug("action: gpio, clear PinReg = ~w, Pin = ~p.", [PinReg,Pin]),
-    gpio:clr(PinReg,Pin);
+run(gpio, [PinReg,Pin,true,_Style,Flags] ) ->
+    case proplists:get_value(board, Flags, cpu) of
+	cpu -> 
+	    lager:debug("action: gpio, set PinReg = ~w, Pin = ~p.", 
+			[PinReg,Pin]),
+	    gpio:set(PinReg,Pin);
+	piface ->
+	    lager:debug("action: gpio, piface set Pin = ~p.", [Pin]),
+	    piface:gpio_set(Pin);
+	_Other ->
+	    %% ignore
+	    ok
+    end;
+run(gpio, [PinReg,Pin,false,_Style,Flags] ) ->
+    case proplists:get_value(board, Flags, cpu) of
+	cpu -> 
+	    lager:debug("action: gpio, clr PinReg = ~w, Pin = ~p.", 
+			[PinReg,Pin]),
+	    gpio:clr(PinReg,Pin);
+	piface ->
+	    lager:debug("action: gpio, piface clr Pin = ~p.", [Pin]),
+	    piface:gpio_clr(Pin);
+	_Other ->
+	    %% ignore
+	    ok
+    end;
 run(Type, [Unit,Chan,Active,Style,_Flags]) ->
     Args = [Unit,Chan,Active,Style],
     lager:debug("action: Type = ~p, Args = ~w.", [Type, Args]),
