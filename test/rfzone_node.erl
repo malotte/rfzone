@@ -19,6 +19,7 @@
 %%
 %% @hidden
 -module(rfzone_node).
+-include("rfzone.hrl").
 
 %% Note: This directive should only be used in test suites.
 -compile(export_all).
@@ -73,6 +74,39 @@ start() ->
 				      {debug, true}]),
     
     {ok, _BPid} = bert_rpc_exec:start().
+
+start_exo() ->
+    Apps = [crypto, public_key, exo, bert, gproc, kvdb],
+    call(Apps, start),
+    ?ei("Started support apps ~p", [Apps]),
+    application:load(exoport),
+    SetUps = case application:get_env(exoport, '$setup_hooks') of
+	       undefined -> [];
+	       {ok, List} -> List
+	     end,
+    ?ei("exoport setup hooks ~p", [SetUps]),
+    [erlang:apply(M,F,A) || {_Phase, {M, F, A}} <- SetUps],
+    ?ei("exoport setup hooks executed.", []),
+    call([exoport], start),
+    ?ei("Started exoport", []),
+    call([lager, canopen, gpio, rfzone], start),%%spi
+    ok.
+    
+call([], _F) ->
+    ok;
+call([App|Apps], F) ->
+    ?ei("~p: ~p\n", [F,App]),
+    case {F, application:F(App)} of
+	{start, {error,{not_started,App1}}} ->
+	    call([App1,App|Apps], F);
+	{start, {error,{already_started,App}}} ->
+	    call(Apps, F);
+	{F, ok} ->
+	    call(Apps, F);
+	{_F, Error} ->
+	    Error
+    end.
+
 
 prepare() ->
     %% Start everything needed

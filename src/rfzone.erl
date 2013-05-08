@@ -28,6 +28,8 @@
 
 -behaviour(application).
 
+-include_lib("lager/include/log.hrl").
+-include("rfzone.hrl").
 
 %% Application API
 -export([start/2,
@@ -39,7 +41,6 @@
 %% Rfzone with exoport API
 -export([start_exo/0]).
 
--include_lib("lager/include/log.hrl").
 
 %%%===================================================================
 %%% API
@@ -78,7 +79,7 @@ start(_StartType, _StartArgs) ->
 -spec stop(State::term()) -> ok | {error, Error::term()}.
 
 stop(_State) ->
-    exit(stopped).
+    exit(normal).
 
 start() ->
     start_em([lager,rfzone]).
@@ -86,21 +87,19 @@ start() ->
 start_exo() ->
     Apps = [crypto, public_key, exo, bert, gproc, kvdb],
     start_em(Apps),
-    error_logger:info_msg("Started support apps ~p", [Apps]),
+    ?ei("Started support apps ~p", [Apps]),
     application:load(exoport),
     SetUps = case application:get_env(exoport, '$setup_hooks') of
 	       undefined -> [];
 	       {ok, List} -> List
 	     end,
-    error_logger:info_msg("exoport setup hooks ~p", [SetUps]),
+    ?ei("exoport setup hooks ~p", [SetUps]),
     [erlang:apply(M,F,A) || {_Phase, {M, F, A}} <- SetUps],
-    error_logger:info_msg("exoport setup hooks executed.", []),
+    ?ei("exoport setup hooks executed.", []),
     start_em([exoport]),
-    error_logger:info_msg("Started exoport", []),
+    ?ei("Started exoport", []),
     start_em([lager, canopen, rfzone]),
     ok.
-
-
 
 
 start_em([App|Apps]) ->

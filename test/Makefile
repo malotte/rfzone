@@ -4,7 +4,8 @@
 
 MODULES = \
 	rfzone_node \
-	rfzone_SUITE
+	rfzone_SUITE \
+	rfzone_exo_SUITE
 
 
 EBIN = .
