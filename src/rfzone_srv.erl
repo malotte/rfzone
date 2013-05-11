@@ -337,7 +337,7 @@ reload() ->
 %% Reloads the configuration file.
 %% @end
 %%--------------------------------------------------------------------
--spec reload(File::atom()) -> 
+-spec reload(File::string()) -> 
 		    ok | {error, Error::term()}.
 
 reload(File) ->
@@ -463,8 +463,8 @@ start_device(Args, Device) ->
 
 handle_call({reload, File}, _From, 
 	    Ctx=#ctx {node_id = Nid, device = OldDevice, items = OldItems}) ->
-    ?dbg("reload ~p",[File]),
     ConfFile = full_filename(File),
+    ?dbg("reload ~p",[ConfFile]),
     case load_config(ConfFile) of
 	{ok,_Conf=#conf {device=NewDevice,items=NewItems,events=Events}} ->
 	    if NewDevice =/= OldDevice ->
@@ -924,9 +924,9 @@ verify_item(_I=#item {type = email, unit = _Unit, lchan = _Lchan,
     %% unit & lchan may be anything right now
     verify_mail_options(Opts);
 
-verify_item(_I=#item {type = exodm, unit = Mod, lchan = Fun, flags = Args}) 
-  when is_atom(Mod), is_atom(Fun), is_list(Args) ->
-    verify_rpc_args(Args);
+verify_item(_I=#item {type = exodm, unit = Mod, lchan = Fun, flags = Flags}) 
+  when is_atom(Mod), is_atom(Fun), is_list(Flags) ->
+    verify_rpc_args(Flags);
 
 verify_item(_I=#item {type = exodm, unit = _Mod, lchan = _Fun, flags = _Args}) ->
     ?dbg("verify_item: illegal exodm format, mod ~p, fun ~p, args ~p.",
@@ -1593,11 +1593,12 @@ run(_I=#item {type = email, flags = Flags}, true, _Style) ->
 	    ok;
 	Error -> Error
     end;
-run(I=#item {type = exodm, unit = Mod, lchan = Fun, flags = Args}, 
+run(I=#item {type = exodm, unit = Mod, lchan = Fun, flags = Flags}, 
     Active, _Style) ->
-    ExodmArgs = rpc_args(I, Active, Args),
+    ExodmArgs = rpc_args(I, Active, proplists:get_value(args, Flags, [])),
     ?dbg("run exodm: M = ~p, F = ~p, A = ~p.",[Mod, Fun, ExodmArgs]),
-    exoport:rpc(Mod, Fun, ExodmArgs);
+    exoport:rpc(exodm_rpc, rpc, [atom_to_binary(Mod, latin1), 
+				 atom_to_binary(Fun, latin1) | ExodmArgs]);
 run(_I=#item {type = gpio, unit = PinReg, lchan = Pin, flags = Flags}, 
     true, _Style) ->
     ?dbg("run gpio set: PinReg = ~p, Pin = ~p, Flags = ~p.",
@@ -1648,12 +1649,22 @@ run(_I=#item {type = Type, unit = Unit, lchan = Chan}, Active, Style) ->
 	    {error,Reason}
     end.
 
-rpc_args(_I=#item {unit = PinReg, lchan = Pin}, Active, _Args) ->
-    [PinReg, Pin, if Active -> 1;
-		     true -> 0
-		  end].
-			  
+rpc_args(_I=#item {rid = Rid, rchan = Rchan}, Active, []) ->
+    [bool2int(Active)].
 
+rpc_args(_I=#item {}, _Active, [], Acc) ->
+    lists:reverse(Acc);
+rpc_args(I=#item {unit = PinReg, lchan = Pin}, Active, [Arg | Args], Acc) ->
+    case Arg of
+	pin_reg -> rpc_args(I, Active, Args, [PinReg | Acc]);
+	pin -> rpc_args(I, Active, Args, [Pin | Acc]);
+	value -> rpc_args(I, Active, Args, [bool2int(Active) | Acc]);
+	_Other -> {error, unknown_arg}
+    end.
+
+bool2int(true) -> 1;
+bool2int(false) -> 0.
+    
 fmt_item(I) when is_record(I,item) ->
     io_lib:format("{rid:~.16#,rchan:~p,type:~p,unit:~p,chan:~p,"
 		  "active:~p,level:~p,flags=~s}",

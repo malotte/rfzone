@@ -1,0 +1,47 @@
+// ---- BEGIN COPYRIGHT -------------------------------------------------------
+//
+//
+// ---- END COPYRIGHT ---------------------------------------------------------
+module rfzone
+{
+
+    namespace "http://rfzone.com/rfzone";
+    prefix rfzone;
+
+    // Import the standard RPC set and its definitions.
+    import exosense {
+        prefix exo;
+    }
+
+    description "Schema for rfzone device management";
+
+
+    rpc gpio_interrupt {
+        description "Handle gpio interrupt.";
+	input {
+	    // Include the standard rpc request elements.
+	    uses exo:std-request;
+
+            leaf pin_register {
+                description
+                "Pin register where the interrupt occured.";
+		type uint32;
+            }
+            leaf pin {
+                description
+                "Pin where the interrupt occured.";
+		type uint32;
+            }
+            leaf value {
+                description
+                "Interrupt value.";
+		type uint32;
+            }
+	}
+
+	output {
+	    uses exo:std-callback; // Most likely just an "accepted" status
+	}
+    }
+
+}

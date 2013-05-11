@@ -36,15 +36,20 @@ serial_os_env() ->
 serial() ->
     case serial_os_env() of
 	not_found ->
-	    try ct:get_config(serial) of
-		undefined -> 16#03000301;
-		S -> S
-	    catch
-		%% Not running CT ??
-		error: _Reason -> 16#03000301		    
+	    case application:get_env(canopen, serial) of
+		undefined ->
+		    try ct:get_config(serial) of
+			undefined -> ct:fail("No serial given");
+			S -> S
+		    catch
+			%% Not running CT ??
+			error: _Reason -> error(no_serial_given) 
+		    end;
+		S -> 
+		    S
 	    end;
-	S -> 
-	   S
+	S ->
+	    S
     end.
 
 init() ->
@@ -75,38 +80,15 @@ start() ->
     
     {ok, _BPid} = bert_rpc_exec:start().
 
-start_exo() ->
-    Apps = [crypto, public_key, exo, bert, gproc, kvdb],
-    call(Apps, start),
-    ?ei("Started support apps ~p", [Apps]),
-    application:load(exoport),
-    SetUps = case application:get_env(exoport, '$setup_hooks') of
-	       undefined -> [];
-	       {ok, List} -> List
-	     end,
-    ?ei("exoport setup hooks ~p", [SetUps]),
-    [erlang:apply(M,F,A) || {_Phase, {M, F, A}} <- SetUps],
-    ?ei("exoport setup hooks executed.", []),
-    call([exoport], start),
-    ?ei("Started exoport", []),
-    call([lager, canopen, gpio, rfzone], start),%%spi
-    ok.
-    
-call([], _F) ->
-    ok;
-call([App|Apps], F) ->
-    ?ei("~p: ~p\n", [F,App]),
-    case {F, application:F(App)} of
-	{start, {error,{not_started,App1}}} ->
-	    call([App1,App|Apps], F);
-	{start, {error,{already_started,App}}} ->
-	    call(Apps, F);
-	{F, ok} ->
-	    call(Apps, F);
-	{_F, Error} ->
-	    Error
-    end.
-
+stop() ->
+    Serial = serial(),
+    co_api:stop(Serial),
+    co_proc:stop(),
+    can_udp:stop(0),
+    can_router:stop(),
+    application:stop(ale),    
+    application:stop(lager),    
+    io:format("Stop bert server manually\n",[]).
 
 prepare() ->
     %% Start everything needed
@@ -117,16 +99,6 @@ prepare() ->
     can_router:start(),
     can_udp:start(0),
     {ok, _PPid} = co_proc:start_link([{linked, false}]).
-
-stop() ->
-    Serial = serial(),
-    co_api:stop(Serial),
-    co_proc:stop(),
-    can_udp:stop(0),
-    can_router:stop(),
-    application:stop(ale),    
-    application:stop(lager),    
-    io:format("Stop bert server manually\n",[]).
 
 start_rfzone() ->
     {ok, _TPid} = 

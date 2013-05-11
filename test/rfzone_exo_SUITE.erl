@@ -28,18 +28,16 @@
 -compile(export_all).
 
 -include_lib("common_test/include/ct.hrl").
+-include("rfzone.hrl").
 
--define(EXO_ACCOUNT, "exodm").
--define(EXO_ADMIN, "exodm-admin").
 -define(RF_ACCOUNT, "rfzone").
 -define(RF_ADMIN, "rfzone-admin").
 -define(RF_PASS, "wewontechcrunch2011").
--define(RF_USER, "mawe").
 -define(RF_YANG, "rfzone.yang").
--define(RF_SET, "rfz").
--define(RF_TYPE, "rfz").
--define(RF_PROT, "rfz").
--define(RF_GROUP, "rfzg").
+-define(RF_SET, "rfzset").
+-define(RF_TYPE, "rfztype").
+-define(RF_PROT, "exodm").
+-define(RF_GROUP, "rfzgroup").
 -define(RF_DEVICE, "rfzone1").
 -define(RF_SERV_KEY, "1").
 -define(RF_DEV_KEY, "2").
@@ -72,9 +70,9 @@ all() ->
 %% @end
 %%--------------------------------------------------------------------
 init_per_suite(Config) ->
+    start_exo(), 
+    close_old_nodes([dm_node()]),
     install_exodm(),
-    rfzone_node:init(),
-    rfzone_node:start_exo(),
     Config.
 
 %%--------------------------------------------------------------------
@@ -83,8 +81,9 @@ init_per_suite(Config) ->
 %% @end
 %%--------------------------------------------------------------------
 end_per_suite(_Config) ->
-    rfzone_node:stop(),
     remove_system(),
+    close_old_nodes([dm_node()]),
+    stop_exo(),
     ok.
 
 
@@ -97,14 +96,9 @@ end_per_suite(_Config) ->
 %% @end
 %%--------------------------------------------------------------------
 init_per_testcase(_TestCase, Config) ->
-    ct:pal("Testcase: ~p", [_TestCase]),
+    ct:pal("Testcase: ~p", [_TestCase]),    
     ConfFile = filename:join(?config(data_dir, Config), ct:get_config(conf)),
-    rfzone_srv:start_link([{debug, true}, 
-			      {linked, false},
-			      {reset, true},
-			      {co_node, rfzone_node:serial()},
-			      {config, ConfFile}]),
-    %% Give rfzone time to reset
+    rfzone_srv:reload(ConfFile),
     Config.
 
 %%--------------------------------------------------------------------
@@ -163,7 +157,7 @@ break(Config) ->
     ets:new(config, [set, public, named_table]),
     ets:insert(config, Config),
     test_server:break("Break for test development\n" ++
-		     "Get Config by ets:tab2list(config)"),
+		     "Get Config by C = ets:tab2list(config)."),
     ok.
 
 
@@ -177,16 +171,16 @@ install_exodm() ->
     [] = os:cmd("cd " ++ ExodmDir ++ "; rm -rf nodes/dm"),
 
     %% Build and start node
-    Res = os:cmd("cd " ++ ExodmDir ++ "; n=dm make node; n=dm make start"),
+    Res = os:cmd("cd " ++ ExodmDir ++ "; n=dm make node"),
     ct:pal("dm node built and started.",[]),
     case string:tokens(Res, "\n") of
-	[_MakeNode,
-	 _ReadData,
-	 _Cd,
-	 "\t../../rel/exodm/bin/exodm start)"] -> ok;
-	_Other ->
-	    ct:pal("node result ~p", [string:tokens(Res, "\n")])
-	    %% Fail ??
+     	[_MakeNode,
+     	 _ReadData,
+     	 _Cd,
+     	 "\t../../rel/exodm/bin/exodm start)"] -> ok;
+     	_Other ->
+     	    ct:pal("node result ~p", [string:tokens(Res, "\n")])
+     	    %% Fail ??
     end,
     NodesRes = os:cmd("cd " ++ ExodmDir ++ "; ls nodes"),
     true = lists:member(<<"dm">>, re:split(NodesRes, "\n", [])),
@@ -195,6 +189,7 @@ install_exodm() ->
     ok.
 
 configure_exodm(Config) ->
+    exodm_json_api:set_exodmrc_dir(?config(data_dir, Config)),
     exodm_json_api:parse_result(
       exodm_json_api:create_account(?RF_ACCOUNT, 
 				    "tony@rogvall.se", 
@@ -241,7 +236,7 @@ configure_exodm(Config) ->
        "ok"),
      exodm_json_api:parse_result(
       exodm_json_api:add_config_set_members(?RF_ACCOUNT, 
-					    [?RF_TYPE], 
+					    [?RF_SET], 
 					    [?RF_DEVICE]),
        "ok"),
      exodm_json_api:parse_result(
@@ -291,3 +286,71 @@ store_logs(Exodm) ->
 notification_url() ->
     Port = ct:get_config(notification_port),
     "https://localhost:" ++ integer_to_list(Port) ++ "/callback".
+
+dm_node() ->
+    list_to_atom("dm@" ++ own_host_string()).
+
+own_host() ->
+    list_to_atom(own_host_string()).
+
+own_host_string() ->
+    OwnNode = atom_to_list(node()),
+    case string:tokens(OwnNode, "@") of
+	[_Node, Host] -> Host;
+	Other -> ct:fail("Not able to get host, got ~p", [Other])
+    end.
+
+close_old_nodes([]) ->
+    ok;
+close_old_nodes([OldNode | Rest]) ->
+    case ct_rpc:call(OldNode, erlang, node, []) of
+	{badrpc, nodedown} ->
+	    %% Good :-)
+	    ct:pal("Cleaning up: Node ~p not running - good!.", [OldNode]),
+	    close_old_nodes(Rest);
+	OldNode ->
+	    %% Old node running, stop it !!
+	    ct:pal("Cleaning up: Node ~p still running, trying to stop it",
+		   [OldNode]),
+	    ct_rpc:call(OldNode, init, stop, []),
+	    timer:sleep(2000),
+	    close_old_nodes([OldNode | Rest])
+    end.
+
+start_exo() ->
+    Apps = [crypto, public_key, lager, ale, exo, bert, gproc, kvdb],
+    call(Apps, start),
+    ?ei("Started support apps ~p", [Apps]),
+    application:load(exoport),
+    SetUps = case application:get_env(exoport, '$setup_hooks') of
+	       undefined -> [];
+	       {ok, List} -> List
+	     end,
+    ?ei("exoport setup hooks ~p", [SetUps]),
+    [erlang:apply(M,F,A) || {_Phase, {M, F, A}} <- SetUps],
+    ?ei("exoport setup hooks executed.", []),
+    call([exoport], start),
+    ?ei("Started exoport", []),
+    call([canopen, gpio, rfzone], start),%%spi
+    ok.
+    
+stop_exo() ->
+    Apps = [rfzone, gpio, canopen, exoport, kvdb, gproc, bert, exo, ale, lager],
+    call(Apps, stop),
+    ok.
+
+call([], _F) ->
+    ok;
+call([App|Apps], F) ->
+    ?ei("~p: ~p\n", [F,App]),
+    case {F, application:F(App)} of
+	{start, {error,{not_started,App1}}} ->
+	    call([App1,App|Apps], F);
+	{start, {error,{already_started,App}}} ->
+	    call(Apps, F);
+	{F, ok} ->
+	    call(Apps, F);
+	{_F, Error} ->
+	    Error
+    end.
+
