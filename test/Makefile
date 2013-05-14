@@ -5,6 +5,7 @@
 MODULES = \
 	rfzone_node \
 	rfzone_SUITE \
+	rfzone_http_server \
 	rfzone_exo_SUITE
 
 

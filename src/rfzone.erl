@@ -79,7 +79,7 @@ start(_StartType, _StartArgs) ->
 -spec stop(State::term()) -> ok | {error, Error::term()}.
 
 stop(_State) ->
-    exit(normal).
+    exit(stopped).
 
 start() ->
     start_em([lager,rfzone]).

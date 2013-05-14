@@ -24,7 +24,10 @@
 -ifndef(RFZONE_HRL).
 -define(RFZONE_HRL, true).
 
--define(dbg(Format, Args), lager:debug(Format, Args)).
+%% Switching to lager (ale)
+-define(dbg(Format, Args),
+ 	lager:debug("~s(~p): " ++ Format, 
+		    [?MODULE, self() | Args])).
 
 %% Convenience defines (also in canopen.hrl)
 -ifndef(ee).

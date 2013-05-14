@@ -715,8 +715,8 @@ handle_info({tellstick_event,_Ref,EventData}, Ctx) ->
 	    {noreply,Ctx}
     end;
 
-handle_info({gpio_interrupt, PinReg, Pin, Value} = E, Ctx) ->
-    ?dbg("handle_info: gpio event ~p\n.",[E]),
+handle_info({gpio_interrupt, PinReg, Pin, Value} = Event, Ctx) ->
+    ?dbg("handle_info: gpio event ~p\n.",[Event]),
     EventData = [{protocol,gpio}, 
 		 {board, cpu}, 
 		 {pin_reg, PinReg}, 
@@ -1436,13 +1436,13 @@ digital_input(I, Nid, Is, Value) ->
        Digital, not SpringBack ->
 	    Active = Value =:= 1,
 	    if I#item.active =:= Active ->  %% no change, do noting
-		    ?dbg("digital_input: No change, no action.", []),
+		    ?dbg("digital_input: no change, no action.", []),
 		    [I | Is];
 	       true ->
 		    exec_digital_input(I, Nid, Is, Active)
 	    end;
        Digital ->
-	    ?dbg("digital_input: No action.", []),
+	    ?dbg("digital_input: no action.", []),
 	    ?dbg("item = ~s\n", [fmt_item(I)]),
 	    [I | Is];
        true ->
@@ -1470,6 +1470,7 @@ exec_digital_input(I, Nid, Is, Active) ->
 		    [I#item { active=Active} | Is]
 	    end;
 	_Error ->
+	    ?dbg("digital_input: run failed.",[]),
 	    [I | Is]
     end.
 
@@ -1595,10 +1596,19 @@ run(_I=#item {type = email, flags = Flags}, true, _Style) ->
     end;
 run(I=#item {type = exodm, unit = Mod, lchan = Fun, flags = Flags}, 
     Active, _Style) ->
-    ExodmArgs = rpc_args(I, Active, proplists:get_value(args, Flags, [])),
+    ExodmArgs = rpc_args(I, Active, proplists:get_value(args, Flags, []), []),
     ?dbg("run exodm: M = ~p, F = ~p, A = ~p.",[Mod, Fun, ExodmArgs]),
-    exoport:rpc(exodm_rpc, rpc, [atom_to_binary(Mod, latin1), 
-				 atom_to_binary(Fun, latin1) | ExodmArgs]);
+    case exoport:rpc(exodm_rpc, rpc, [atom_to_binary(Mod, latin1), 
+				      atom_to_binary(Fun, latin1), 
+				      ExodmArgs]) of
+	{reply,[{result,<<"accepted">>}],[]} ->
+	    ?dbg("run exodm result ok", []),
+	    ok;
+	_Other ->
+	    ?dbg("run exodm result ~p", [_Other]),
+	    ?ee("rpc call ~p:~p(~p) failed",[Mod, Fun, ExodmArgs]),
+	    {error, rpc_call_failed}
+    end;
 run(_I=#item {type = gpio, unit = PinReg, lchan = Pin, flags = Flags}, 
     true, _Style) ->
     ?dbg("run gpio set: PinReg = ~p, Pin = ~p, Flags = ~p.",
@@ -1649,18 +1659,12 @@ run(_I=#item {type = Type, unit = Unit, lchan = Chan}, Active, Style) ->
 	    {error,Reason}
     end.
 
-rpc_args(_I=#item {rid = Rid, rchan = Rchan}, Active, []) ->
-    [bool2int(Active)].
-
 rpc_args(_I=#item {}, _Active, [], Acc) ->
     lists:reverse(Acc);
-rpc_args(I=#item {unit = PinReg, lchan = Pin}, Active, [Arg | Args], Acc) ->
-    case Arg of
-	pin_reg -> rpc_args(I, Active, Args, [PinReg | Acc]);
-	pin -> rpc_args(I, Active, Args, [Pin | Acc]);
-	value -> rpc_args(I, Active, Args, [bool2int(Active) | Acc]);
-	_Other -> {error, unknown_arg}
-    end.
+rpc_args(I=#item {}, Active, [{_Key, _Value} = Arg | Args], Acc) ->
+    rpc_args(I, Active, Args, [Arg | Acc]);
+rpc_args(I=#item {}, Active, [value = Key | Args], Acc) ->
+    rpc_args(I, Active, Args, [{Key, bool2int(Active)} | Acc]).
 
 bool2int(true) -> 1;
 bool2int(false) -> 0.

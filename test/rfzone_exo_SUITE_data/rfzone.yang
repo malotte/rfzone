@@ -16,21 +16,20 @@ module rfzone
     description "Schema for rfzone device management";
 
 
-    rpc gpio_interrupt {
+    rpc gpio-interrupt {
         description "Handle gpio interrupt.";
 	input {
-	    // Include the standard rpc request elements.
-	    uses exo:std-request;
-
-            leaf pin_register {
+          uses exo:std-request;
+          
+          leaf pin-register {
                 description
-                "Pin register where the interrupt occured.";
+                "Pin register where interrupt occured.";
 		type uint32;
             }
             leaf pin {
-                description
-                "Pin where the interrupt occured.";
-		type uint32;
+              description
+                "Pin where interrupt occured.";
+              type uint32;
             }
             leaf value {
                 description
@@ -40,7 +39,9 @@ module rfzone
 	}
 
 	output {
-	    uses exo:std-callback; // Most likely just an "accepted" status
+            leaf result {
+		type exo:status-code;
+	    }
 	}
     }
 

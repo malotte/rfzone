@@ -71,7 +71,7 @@ start_link(Args) ->
 -spec stop(StartArgs::list(term())) -> ok | {error, Error::term()}.
 
 stop(_StartArgs) ->
-    exit(stopped).
+    exit(normal).
 
 %% ===================================================================
 %% Supervisor callbacks

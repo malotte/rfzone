@@ -40,7 +40,9 @@
 -define(RF_GROUP, "rfzgroup").
 -define(RF_DEVICE, "rfzone1").
 -define(RF_SERV_KEY, "1").
--define(RF_DEV_KEY, "2").
+-define(RF_DEV_KEY, "99").
+
+-define(v(Pat, Expr), {Pat,Pat} = {Pat, Expr}).
 
 %%--------------------------------------------------------------------
 %% @spec suite() -> Info
@@ -60,7 +62,7 @@ suite() ->
 %%--------------------------------------------------------------------
 all() -> 
     [start_rfzone_exo,
-     turn_on_off].
+     gpio_interrupt].
 
 %%--------------------------------------------------------------------
 %% @spec init_per_suite(Config0) ->
@@ -95,6 +97,14 @@ end_per_suite(_Config) ->
 %% Reason = term()
 %% @end
 %%--------------------------------------------------------------------
+init_per_testcase(gpio_interrupt = TC, Config) ->
+    ct:pal("Testcase: ~p", [TC]),    
+    ConfFile = filename:join(?config(data_dir, Config), ct:get_config(conf)),
+    rfzone_srv:reload(ConfFile),
+    configure_exodm(Config),
+    {ok, Http} = rfzone_http_server:start(ct:get_config(notification_port)),
+    ct:pal("Http pid ~p", [Http]),
+    [{http_callback, Http}] ++ Config;
 init_per_testcase(_TestCase, Config) ->
     ct:pal("Testcase: ~p", [_TestCase]),    
     ConfFile = filename:join(?config(data_dir, Config), ct:get_config(conf)),
@@ -109,9 +119,22 @@ init_per_testcase(_TestCase, Config) ->
 %% Reason = term()
 %% @end
 %%--------------------------------------------------------------------
-end_per_testcase(_TestCase, _Config) ->
-    rfzone_srv:stop(),
+end_per_testcase(gpio_interrupt = TestCase, Config) ->
+    ct:pal("End testcase: ~p", [TestCase]),
+    %% Do this always to be sure
+    try
+	unregister(rfzone_test)
+    catch
+	error:badarg -> ok
+    end,
+    %% Stop https_callback
+    Http = ?config(http_callback, Config),
+    exit(Http, stop),
+    ok;
+end_per_testcase(TestCase, _Config) ->
+    ct:pal("End testcase: ~p", [TestCase]),
     ok.
+
 
 
 %%--------------------------------------------------------------------
@@ -124,26 +147,26 @@ start_rfzone(_Config) ->
     ok.
 
 %%--------------------------------------------------------------------
-%% @spec turn_on() -> ok
+%% @spec gpio_interrupt() -> ok
 %% @end
 %%--------------------------------------------------------------------
-turn_on_off(_Config) ->
-    %% Springback requires on and off
-    ct:pal("Turning on", []),
-    co_api:notify({xnodeid, ct:get_config(source_node)}, 
-		  pdo1_tx, 16#6000, 11, <<1:32/little>>),
-    co_api:notify({xnodeid, ct:get_config(source_node)}, 
-		  pdo1_tx, 16#6000, 11, <<0:32/little>>),
-    %% How verify ??
-    timer:sleep(500),
-    ct:pal("Turning off", []),
-    co_api:notify({xnodeid, ct:get_config(source_node)}, 
-		  pdo1_tx, 16#6000, 11, <<1:32/little>>),
-    co_api:notify({xnodeid, ct:get_config(source_node)}, 
-		  pdo1_tx, 16#6000, 11, <<0:32/little>>),
-    %% How verify ??
-    timer:sleep(500),
-    ct:pal("Ready", []),
+gpio_interrupt(_Config) ->
+    true = register(rfzone_test, self()),  
+    RfZone = case whereis(rfzone_srv) of
+		 Pid when is_pid(Pid) -> Pid;
+		 _ -> ct:fail("No rfzone found !!",[])
+	     end,
+
+    %% Simulate gpio interrupt
+    RfZone ! {gpio_interrupt, 0, 1, 1},
+    {?RF_DEVICE, 0, 1, 1}  = 
+	json_notification("gpio-interrupt","rfzone:gpio-interrupt", unknown),
+
+    %% Simulate gpio interrupt
+    RfZone ! {gpio_interrupt, 0, 1, 0},
+    {?RF_DEVICE, 0, 1, 0}  = 
+	json_notification("gpio-interrupt","rfzone:gpio-interrupt", unknown),
+    unregister(rfzone_test), 
     ok.
 
 %%--------------------------------------------------------------------
@@ -171,7 +194,7 @@ install_exodm() ->
     [] = os:cmd("cd " ++ ExodmDir ++ "; rm -rf nodes/dm"),
 
     %% Build and start node
-    Res = os:cmd("cd " ++ ExodmDir ++ "; n=dm make node"),
+    Res = os:cmd("cd " ++ ExodmDir ++ "; n=dm make node; n=dm make start"), %%
     ct:pal("dm node built and started.",[]),
     case string:tokens(Res, "\n") of
      	[_MakeNode,
@@ -281,7 +304,44 @@ store_logs(Exodm) ->
 	    end
     end.
 
+json_notification(Request, Callback, TransId) ->
+    receive
+	{http_request, Body, Sender} ->
+	    verify_notification(Request, Body, Callback, TransId, Sender)
+    after 3000 ->
+	    ct:fail("No " ++ Request ++ " confirmation received",[])
+    end.
 
+verify_notification(Request, Body, Callback, _TransId, Sender) ->
+    String = binary_to_list(Body),
+    {ok, {struct, Values}} = json2:decode_string(String),
+    ?v({"jsonrpc","2.0"}, lists:keyfind("jsonrpc",1,Values)),
+    case lists:keyfind("method",1,Values) of
+	{"method", "rfzone:gpio-interrupt"} ->
+	    {"id",TransIdString} = lists:keyfind("id",1,Values),
+%%	    Sender ! "OK",
+	    Sender ! json_ok(TransIdString),
+	    {"params", {struct, Params}} = lists:keyfind("params",1, Values),
+	    {"device-id", DeviceId} = lists:keyfind("device-id",1,Params),
+	    {"pin-register", PinReg} = lists:keyfind("pin-register",1,Params),
+	    {"pin", Pin} = lists:keyfind("pin",1,Params),
+	    {"value", Value} = lists:keyfind("value",1,Params),
+	    {DeviceId, PinReg, Pin, Value};
+	{"method", _Other} ->
+	    %% See if unknown (while developing)
+	    if Callback == unknown ->
+		    ct:pal("~p notification: ~p",[Request, Body]),
+		    ok;
+	       true ->
+		    %% Something is wrong
+		    ct:fail("~p unexpected notification: ~p",[Request, Body])
+	    end
+    end.
+
+json_ok(TransId) ->
+    json2:encode({struct, [{"jsonrpc", "2.0"},
+			   {"id", TransId},
+			   {"result", {struct,[{"result", "0"}]}}]}).
     
 notification_url() ->
     Port = ct:get_config(notification_port),
