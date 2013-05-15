@@ -75,6 +75,7 @@ init_per_suite(Config) ->
     start_exo(), 
     close_old_nodes([dm_node()]),
     install_exodm(),
+    rfzone_customer_server:start(),
     Config.
 
 %%--------------------------------------------------------------------
@@ -83,6 +84,7 @@ init_per_suite(Config) ->
 %% @end
 %%--------------------------------------------------------------------
 end_per_suite(_Config) ->
+    rfzone_customer_server:stop(),
     remove_system(),
     close_old_nodes([dm_node()]),
     stop_exo(),
@@ -97,20 +99,18 @@ end_per_suite(_Config) ->
 %% Reason = term()
 %% @end
 %%--------------------------------------------------------------------
-init_per_testcase(gpio_interrupt = TC, Config) ->
-    ct:pal("Testcase: ~p", [TC]),    
+init_per_testcase(TestCase, Config) ->
+    ct:pal("Testcase: ~p", [TestCase]),    
     ConfFile = filename:join(?config(data_dir, Config), ct:get_config(conf)),
     rfzone_srv:reload(ConfFile),
-    configure_exodm(Config),
-    {ok, Http} = rfzone_http_server:start(ct:get_config(notification_port)),
-    ct:pal("Http pid ~p", [Http]),
-    [{http_callback, Http}] ++ Config;
-init_per_testcase(_TestCase, Config) ->
-    ct:pal("Testcase: ~p", [_TestCase]),    
-    ConfFile = filename:join(?config(data_dir, Config), ct:get_config(conf)),
-    rfzone_srv:reload(ConfFile),
-    Config.
+    tc_init(TestCase, Config).
 
+tc_init(gpio_interrupt, Config) ->
+    configure_exodm(Config),
+    Config;
+tc_init(_TC, Config) ->
+    Config.
+    
 %%--------------------------------------------------------------------
 %% @spec end_per_testcase(TestCase, Config0) ->
 %%               void() | {save_config,Config1} | {fail,Reason}
@@ -119,18 +119,6 @@ init_per_testcase(_TestCase, Config) ->
 %% Reason = term()
 %% @end
 %%--------------------------------------------------------------------
-end_per_testcase(gpio_interrupt = TestCase, Config) ->
-    ct:pal("End testcase: ~p", [TestCase]),
-    %% Do this always to be sure
-    try
-	unregister(rfzone_test)
-    catch
-	error:badarg -> ok
-    end,
-    %% Stop https_callback
-    Http = ?config(http_callback, Config),
-    exit(Http, stop),
-    ok;
 end_per_testcase(TestCase, _Config) ->
     ct:pal("End testcase: ~p", [TestCase]),
     ok.
@@ -151,22 +139,20 @@ start_rfzone(_Config) ->
 %% @end
 %%--------------------------------------------------------------------
 gpio_interrupt(_Config) ->
-    true = register(rfzone_test, self()),  
     RfZone = case whereis(rfzone_srv) of
 		 Pid when is_pid(Pid) -> Pid;
 		 _ -> ct:fail("No rfzone found !!",[])
 	     end,
 
     %% Simulate gpio interrupt
-    RfZone ! {gpio_interrupt, 0, 1, 1},
+    RfZone ! {gpio_interrupt, 0, 17, 1},
     {?RF_DEVICE, 0, 1, 1}  = 
 	json_notification("gpio-interrupt","rfzone:gpio-interrupt", unknown),
 
     %% Simulate gpio interrupt
-    RfZone ! {gpio_interrupt, 0, 1, 0},
+    RfZone ! {gpio_interrupt, 0, 17, 0},
     {?RF_DEVICE, 0, 1, 0}  = 
 	json_notification("gpio-interrupt","rfzone:gpio-interrupt", unknown),
-    unregister(rfzone_test), 
     ok.
 
 %%--------------------------------------------------------------------
@@ -305,12 +291,9 @@ store_logs(Exodm) ->
     end.
 
 json_notification(Request, Callback, TransId) ->
-    receive
-	{http_request, Body, Sender} ->
-	    verify_notification(Request, Body, Callback, TransId, Sender)
-    after 3000 ->
-	    ct:fail("No " ++ Request ++ " confirmation received",[])
-    end.
+    {http_request, Body, Sender} = 
+	rfzone_customer_server:receive_notification(3000),
+    verify_notification(Request, Body, Callback, TransId, Sender).
 
 verify_notification(Request, Body, Callback, _TransId, Sender) ->
     String = binary_to_list(Body),

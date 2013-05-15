@@ -66,7 +66,7 @@ handle_body(Socket, Request, Body) ->
 	    ok;
        Url#url.path == "/callback" ->
 	    ct:pal("rfzone_http_server: handle_body: callback.",[]),
-	    case whereis(rfzone_test) of
+	    case whereis(rfzone_customer_server) of
 		Pid when is_pid(Pid) ->
 		    ct:pal("rfzone_http_server: handle_body: send to ~p.",[Pid]),
 		    Pid ! {http_request, Body, self()};

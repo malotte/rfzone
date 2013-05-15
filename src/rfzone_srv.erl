@@ -114,12 +114,15 @@
 %% Loop data
 -record(ctx,
 	{
-	  co_node, %% any identity of co_node i.e. serial | name | nodeid ...
-	  node_id, %% nodeid | xnodeid of co_node, needed in notify
-	           %% should maybe be fetched when needed instead of stored in loop data ??
-	  device,  %% device used
-	  items,   %% controlled items
-	  events,  %% controlled events
+	  co_node::term(), %% any identity of co_node i.e. 
+	                   %% serial | name | nodeid ...
+	  node_id::integer(), %% nodeid | xnodeid of co_node, needed in notify
+	                      %% should maybe be fetched when needed instead 
+	                      %% of stored in loop data ??
+	  device::{string() | simulated, atom} = {simulated, ?DEF_VERSION},  
+	  items::list() = [],   %% controlled items
+	  events::list() = [],  %% controlled events
+	  piface_initialized::boolean() = false, %% flag needed for gpio/piface
 	  trace
 	}).
 
@@ -388,23 +391,25 @@ conf(Args,CoNode) ->
     ?dbg("init: File = ~p", [ConfFile]),
 
     case load_config(ConfFile) of
-	{ok, Conf=#conf {device = Device}} ->
+	{ok, Conf=#conf {device = Device, items = Items, events = Events}} ->
 	    start_device(Args, Device),
 	    tellstick_drv:subscribe(),
 	    {ok, _Dict} = co_api:attach(CoNode),
 	    Nid = co_api:get_option(CoNode, id),
 	    subscribe(CoNode),
 	    case proplists:get_value(reset, Args, false) of
-		true -> reset_items(Conf#conf.items);
+		true -> reset_items(Items);
 		false -> do_nothing
 	    end,
-	    power_on(Nid, Conf#conf.items),
+	    PifaceInit = init_piface_if_needed(Items),
+	    power_on(Nid, Items),
 	    process_flag(trap_exit, true),
 	    {ok, #ctx { co_node = CoNode, 
 			device = Device,
 			node_id = Nid, 
-			items=Conf#conf.items,
-			events=Conf#conf.events,
+			items=Items,
+			events=Events,
+			piface_initialized = PifaceInit,
 			trace=Trace
 		      }};
 	Error ->
@@ -508,10 +513,18 @@ handle_call({reload, File}, _From,
 			  end
 		  end, [], OldItems),
 
+	    PifaceInit = 
+		case Ctx#ctx.piface_initialized of
+		    false -> init_piface_if_needed(Items);
+		    true -> true
+		end,
+
 	    power_on(Nid, ItemsToAdd),
 	    power_off(Nid, ItemsToRemove),
-	    {reply, ok, Ctx#ctx {items = NewItems, events=Events,
-				 device = NewDevice}};
+	    {reply, ok, Ctx#ctx {items = NewItems, 
+				 events=Events,
+				 device = NewDevice,
+				 piface_initialized = PifaceInit}};
 	Error ->
 	    {reply, Error, Ctx}
     end;
@@ -592,6 +605,7 @@ handle_call(stop, _From, Ctx) ->
     {stop, normal, ok, Ctx};
 
 handle_call(_Request, _From, Ctx) ->
+    ?dbg("handle_call: unknown request ~p", [_Request]),
     {reply, {error,bad_call}, Ctx}.
 
 %%--------------------------------------------------------------------
@@ -665,7 +679,7 @@ handle_cast({nodeid_change, _TypeOfNid, _OldNid, _NewNid},
     {noreply, Ctx#ctx {node_id = {name, Nid}}};
 
 handle_cast(_Msg, Ctx) ->
-    ?dbg("handle_cast: Unknown Msg ~p", [_Msg]),
+    ?dbg("handle_cast: unknown msg ~p", [_Msg]),
     {noreply, Ctx}.
 
 %%--------------------------------------------------------------------
@@ -750,7 +764,7 @@ handle_info({'EXIT', _Pid, co_node_terminated}, Ctx) ->
     {stop, co_node_terminated, Ctx};   
  
 handle_info(_Info, Ctx) ->
-    ?dbg("handle_info: Unknown Info ~p", [_Info]),
+    ?dbg("handle_info: unknown info ~p", [_Info]),
     {noreply, Ctx}.
 
 %%--------------------------------------------------------------------
@@ -1336,7 +1350,11 @@ init_if_gpio(?MSG_OUTPUT_ADD,
 	     _I=#item {type = gpio, unit = PinReg, lchan = Pin, flags = Flags}) ->
     case proplists:get_value(board, Flags, cpu) of
 	cpu -> 
-	    gpio:init(PinReg, Pin);
+	    gpio:init(PinReg, Pin),
+	    case proplists:get_value(interrupt, Flags, undefined) of
+		undefined -> ok;
+		Direction -> gpio:set_interrupt(PinReg, Pin, Direction)
+	    end;
 	piface ->
 	    ok;
 	_Board ->
@@ -1345,7 +1363,19 @@ init_if_gpio(?MSG_OUTPUT_ADD,
 init_if_gpio(_Cmd, _I) -> %% Release case ??
     ok.
 
-
+init_piface_if_needed([]) ->
+    false;
+init_piface_if_needed([_I=#item {type = gpio} | Items]) ->
+    case proplists:get_value(board, Flags, cpu) of
+	piface ->
+	    piface:init(),
+	    true;
+	_Board ->
+	    init_piface_if_needed(Items)
+    end;
+init_piface_if_needed([_I=#item {} | Items]) ->
+    init_piface_if_needed(Items).
+   
 reset_items(Items) ->
     lists:foreach(
       fun(I) ->
