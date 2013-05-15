@@ -1319,6 +1319,12 @@ verify_flags(gpio, [{board, piface} | _Flags], _I)  ->
     {error, invalid_board_pin_combination};
 verify_flags(gpio, [{board, _Board} | _Flags], _I) ->
     {error, not_supported_board};
+verify_flags(gpio = Type, [{interrupt, Direction} | Flags], I) 
+  when Direction == none;
+       Direction == falling;
+       Direction == rising;
+       Direction == both ->
+    verify_flags(Type, Flags, I);
 verify_flags(Type, [{inhibit,Time} | Flags], I)
   when is_integer(Time), Time >= 0 ->
     verify_flags(Type, Flags, I);
