@@ -119,10 +119,10 @@
 	  node_id::integer(), %% nodeid | xnodeid of co_node, needed in notify
 	                      %% should maybe be fetched when needed instead 
 	                      %% of stored in loop data ??
-	  device::{string() | simulated, atom} = {simulated, ?DEF_VERSION},  
-	  items::list() = [],   %% controlled items
-	  events::list() = [],  %% controlled events
-	  piface_initialized::boolean() = false, %% flag needed for gpio/piface
+	  device = {simulated, ?DEF_VERSION}::tuple(),  
+	  items = []::list(),   %% controlled items
+	  events = []::list(),  %% controlled events
+	  piface_initialized = false::boolean(), %% flag needed for gpio/piface
 	  trace
 	}).
 
@@ -391,7 +391,7 @@ conf(Args,CoNode) ->
     ?dbg("init: File = ~p", [ConfFile]),
 
     case load_config(ConfFile) of
-	{ok, Conf=#conf {device = Device, items = Items, events = Events}} ->
+	{ok, _Conf=#conf {device = Device, items = Items, events = Events}} ->
 	    start_device(Args, Device),
 	    tellstick_drv:subscribe(),
 	    {ok, _Dict} = co_api:attach(CoNode),
@@ -515,7 +515,7 @@ handle_call({reload, File}, _From,
 
 	    PifaceInit = 
 		case Ctx#ctx.piface_initialized of
-		    false -> init_piface_if_needed(Items);
+		    false -> init_piface_if_needed(NewItems);
 		    true -> true
 		end,
 
@@ -1365,7 +1365,7 @@ init_if_gpio(_Cmd, _I) -> %% Release case ??
 
 init_piface_if_needed([]) ->
     false;
-init_piface_if_needed([_I=#item {type = gpio} | Items]) ->
+init_piface_if_needed([_I=#item {type = gpio, flags = Flags} | Items]) ->
     case proplists:get_value(board, Flags, cpu) of
 	piface ->
 	    piface:init(),
