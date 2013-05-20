@@ -65,7 +65,7 @@ receive_notification(TimeOut)  ->
 %% @end
 %%--------------------------------------------------------------------
 init(Args) ->
-     ?dbg("init: args ~p", [Args]),
+    ?dbg("init: args ~p", [Args]),
     HttpPort = proplists:get_value(http_port, Args, 8980),
     {ok, Http} = rfzone_http_server:start(HttpPort),
     {ok, #ctx {http = Http}}.

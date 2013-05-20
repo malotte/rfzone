@@ -879,7 +879,7 @@ piface_event(ChangeMask, Pin, NewMask, Ctx) ->
        true ->
 	    do_nothing
     end,
-    piface_event(ChangeMask bsl 1, Pin + 1, NewMask, Ctx).
+    piface_event(ChangeMask bsr 1, Pin + 1, NewMask, Ctx).
 
 piface_event(Pin, Value, Ctx) ->
     EventData = [{protocol,gpio}, 
