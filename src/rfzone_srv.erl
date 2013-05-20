@@ -112,6 +112,7 @@
 	  rchan,  %% 1..254
 	  type,   %% digital,analog,encoder
 	  value,  %% depend on type
+	  direction = undefined, %% Interrupt direction
 	  polarity = false %% Switch polarity of value
 	}).
 
@@ -853,20 +854,30 @@ handle_event(EventData, ActualValue, Ctx) ->
 	    event_notify(ActualValue, E)
     end.
 
-event_notify(ActualValue,
-	     _E=#event {value = Value, type = Type, rid = Rid, rchan = Rchan, polarity = Polarity}) ->
-    %% Value can be hardcoded in event definition or given by eventdata
-    V = 
-	if Value =:= value -> ActualValue;
+event_notify(ActualValue,_E=#event {value = Value, 
+				    type = Type, 
+				    rid = Rid, 
+				    rchan = Rchan, 
+				    polarity = Polarity, 
+				    direction = Direction}) ->
+    %% Value can be hardcoded in event definition or given by argument
+    V = if Value =:= value -> ActualValue;
 	   true -> Value
 	end,
     %% If polarity flag is true value should be inverted
-    V1 = 
-	if Polarity -> V bxor 1;
-	   true -> V
-	end,
+    V1 = if Polarity -> V bxor 1;
+	    true -> V
+	 end,
+    
     Data = <<V1:32/little>>,
-    co_api:notify(Rid, type2msg(Type),Rchan, Data).
+    %% If an interrupt event verify direction against actual value
+    case {Direction, ActualValue} of
+	{rising,  0} -> do_nothing;
+	{falling, 1} -> do_nothing;
+	{none, _} -> do_nothing;
+	_Other -> co_api:notify(Rid, type2msg(Type),Rchan, Data)
+    end.
+    
 
 piface_event(Ctx=#ctx {piface_mask = OldMask}) ->
     case piface:read_input() of
@@ -889,9 +900,7 @@ piface_event(ChangeMask, Pin, NewMask, Ctx) ->
 	    NewValue = NewMask band (1 bsl Pin),
 	    EventData = [{protocol,gpio}, 
 			 {board, piface}, 
-			 {pin_reg, 0}, 
-			 {pin, Pin}, 
-			 {interrupt, interrupt(NewValue)}],
+			 {pin, Pin}],
 	    ?dbg("piface_event: event ~p.", [EventData]),
 	    handle_event(EventData, NewValue, Ctx);
        true ->
@@ -899,9 +908,6 @@ piface_event(ChangeMask, Pin, NewMask, Ctx) ->
     end,
     piface_event(ChangeMask bsr 1, Pin + 1, NewMask, Ctx).
 
-interrupt(1) -> rising;
-interrupt(0) -> falling.
-    
 %%--------------------------------------------------------------------
 %% Digital output
 %%--------------------------------------------------------------------
@@ -1272,11 +1278,13 @@ load_conf([C | Cs], Conf, Is, Ts) ->
 	{event, Pattern, {Rid,RChan,Type,Value}} ->
 	    RCobId = rid_translate(Rid),
 	    Polarity = proplists:get_value(polarity, Pattern, false),
+	    Direction = proplists:get_value(interrupt, Pattern, undefined),
 	    Item = #event { pattern = Pattern,
 			    rid   = RCobId,
 			    rchan = RChan,
 			    type  = Type,
 			    value = Value,
+			    direction = Direction,
 			    polarity = Polarity},
 	    case verify_event(Item) of
 		ok ->
@@ -1330,18 +1338,14 @@ take_event(EventData, [E=#event { pattern=Pattern }|Ts]) ->
 take_event(_EventData, []) ->
     false.
 
-match_event([{interrupt = K,V}|Kvs], EventData) ->
-    case lists:keytake(K, 1, EventData) of
-	{value,{K,V},EventData1} -> match_event(Kvs,EventData1); %% Same 
-	{value,{K,both},EventData1} -> match_event(Kvs,EventData1); %% Both 
-	_ -> false
-    end;
-match_event([{polarity,_V}|Kvs], EventData) ->
+match_event([{Key,_Value}|Kvs], EventData) 
+  when Key == polarity;
+       Key == interrupt ->
     %% Ignore now
     match_event(Kvs,EventData);
-match_event([{K,V}|Kvs], EventData) ->
-    case lists:keytake(K, 1, EventData) of
-	{value,{K,V},EventData1} -> match_event(Kvs,EventData1);
+match_event([{Key,Value}|Kvs], EventData) ->
+    case lists:keytake(Key, 1, EventData) of
+	{value,{Key,Value},EventData1} -> match_event(Kvs,EventData1);
 	_ -> false
     end;
 match_event([], _EventData) ->

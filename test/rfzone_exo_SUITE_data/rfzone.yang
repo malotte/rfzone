@@ -45,4 +45,27 @@ module rfzone
 	}
     }
 
+    rpc piface-interrupt {
+        description "Handle piface interrupt.";
+	input {
+          uses exo:std-request;
+          
+            leaf pin {
+              description
+                "Pin where interrupt occured.";
+              type uint32;
+            }
+            leaf value {
+                description
+                "Interrupt value.";
+		type uint32;
+            }
+	}
+
+	output {
+            leaf result {
+		type exo:status-code;
+	    }
+	}
+    }
 }
