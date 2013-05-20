@@ -106,6 +106,7 @@ init_per_testcase(TestCase, Config) ->
     tc_init(TestCase, Config).
 
 tc_init(gpio_interrupt, Config) ->
+    configure_api(Config),
     configure_exodm(Config),
     Config;
 tc_init(_TC, Config) ->
@@ -198,8 +199,10 @@ install_exodm() ->
 
     ok.
 
+configure_api(Config) ->
+    exodm_json_api:set_exodmrc_dir(?config(data_dir, Config)).
+
 configure_exodm(Config) ->
-    exodm_json_api:set_exodmrc_dir(?config(data_dir, Config)),
     exodm_json_api:parse_result(
       exodm_json_api:create_account(?RF_ACCOUNT, 
 				    "tony@rogvall.se", 
