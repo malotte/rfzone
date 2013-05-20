@@ -144,14 +144,15 @@ gpio_interrupt(_Config) ->
 		 _ -> ct:fail("No rfzone found !!",[])
 	     end,
 
+    {PinReg, Pin} = ct:get_config(gpio_pin),
     %% Simulate gpio interrupt
-    RfZone ! {gpio_interrupt, 0, 17, 1},
-    {?RF_DEVICE, 0, 1, 1}  = 
+    RfZone ! {gpio_interrupt, PinReg, Pin, 1},
+    {?RF_DEVICE, PinReg, Pin, 1}  = 
 	json_notification("gpio-interrupt","rfzone:gpio-interrupt", unknown),
 
     %% Simulate gpio interrupt
-    RfZone ! {gpio_interrupt, 0, 17, 0},
-    {?RF_DEVICE, 0, 1, 0}  = 
+    RfZone ! {gpio_interrupt, PinReg, Pin, 0},
+    {?RF_DEVICE, PinReg, Pin, 0}  = 
 	json_notification("gpio-interrupt","rfzone:gpio-interrupt", unknown),
     ok.
 

@@ -41,9 +41,12 @@
 -export([reload/0, 
 	 reload/1]).
 %% RPC API
--export([analog_input/3,digital_input/3]).
--export([item_configuration/2, configure_item/3]).
--export([device_configuration/0, configure_device/1]).
+-export([analog_output/3,
+	 digital_output/3]).
+-export([item_configuration/2, 
+	 configure_item/3]).
+-export([device_configuration/0, 
+	 configure_device/1]).
 -export([action/4]).
 -export([power/2]).
 
@@ -123,6 +126,7 @@
 	  items = []::list(),   %% controlled items
 	  events = []::list(),  %% controlled events
 	  piface_initialized = false::boolean(), %% flag needed for gpio/piface
+	  piface_mask = 16#ff::integer(), %% Values for piface pins
 	  trace
 	}).
 
@@ -256,36 +260,36 @@ configure_device(Config) when is_list(Config) ->
 %% Executes the equivalance of an ?MSG_ANALOG
 %% @end
 %%--------------------------------------------------------------------
--spec analog_input(RemoteId::integer(),
+-spec analog_output(RemoteId::integer(),
 		   Channel::integer(),
 		   Level::integer()) -> ok | {error, Error::term()}.
 
-analog_input(RemoteId, Channel, Level) 
+analog_output(RemoteId, Channel, Level) 
   when is_integer(RemoteId) andalso
        is_integer(Channel) andalso
        is_integer(Level) ->
-    gen_server:cast(?SERVER, {analog_input, RemoteId, Channel, Level}).
+    gen_server:cast(?SERVER, {analog_output, RemoteId, Channel, Level}).
 
 %%--------------------------------------------------------------------
 %% @doc
 %% Executes the equivalance of an ?MSG_DIGTAL
 %% @end
 %%--------------------------------------------------------------------
--spec digital_input(RemoteId::integer(),
+-spec digital_output(RemoteId::integer(),
 		    Channel::integer(),
 		    Action::on | off) -> ok | {error, Error::term()}.
 
-digital_input(RemoteId, Channel, Action) 
+digital_output(RemoteId, Channel, Action) 
   when is_integer(RemoteId) andalso
        is_integer(Channel) andalso
        (Action =:= on orelse Action =:= off) ->
-    gen_server:cast(?SERVER, {digital_input, RemoteId, Channel, 
+    gen_server:cast(?SERVER, {digital_output, RemoteId, Channel, 
 			      if Action =:= on -> 1; Action =:= off -> 0 end});
-digital_input(RemoteId, Channel, Action) 
+digital_output(RemoteId, Channel, Action) 
   when is_integer(RemoteId) andalso
        is_integer(Channel) andalso
        Action =:= onoff -> %% Springback
-    gen_server:cast(?SERVER, {digital_input, RemoteId, Channel, 1}).
+    gen_server:cast(?SERVER, {digital_output, RemoteId, Channel, 1}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -403,6 +407,7 @@ conf(Args,CoNode) ->
 	    end,
 	    PifaceInit = init_piface_if_needed(Items),
 	    power_on(Nid, Items),
+	    init_events(Events),
 	    process_flag(trap_exit, true),
 	    {ok, #ctx { co_node = CoNode, 
 			device = Device,
@@ -521,6 +526,8 @@ handle_call({reload, File}, _From,
 
 	    power_on(Nid, ItemsToAdd),
 	    power_off(Nid, ItemsToRemove),
+
+	    init_events(Events),
 	    {reply, ok, Ctx#ctx {items = NewItems, 
 				 events=Events,
 				 device = NewDevice,
@@ -638,12 +645,12 @@ handle_cast({extended_notify, _Index, Frame}, Ctx) ->
 	    {noreply, Ctx}
     end;
 
-handle_cast({analog_input, RemoteId, Channel, Value} = _X, Ctx) ->
-    ?dbg("handle_cast: received analog_input ~p.",[_X]),
+handle_cast({analog_output, RemoteId, Channel, Value} = _X, Ctx) ->
+    ?dbg("handle_cast: received analog_output ~p.",[_X]),
     handle_notify({RemoteId, ?MSG_ANALOG, Channel, Value}, Ctx);
 
-handle_cast({digital_input, RemoteId, Channel, Value} = _X, Ctx) ->
-    ?dbg("handle_cast: received digital_input ~p.",[_X]),
+handle_cast({digital_output, RemoteId, Channel, Value} = _X, Ctx) ->
+    ?dbg("handle_cast: received digital_output ~p.",[_X]),
     handle_notify({RemoteId, ?MSG_DIGITAL, Channel, Value}, Ctx);
 
 handle_cast({action, RemoteId, Action, Channel, Value} = _X, Ctx) ->
@@ -690,7 +697,7 @@ handle_cast(_Msg, Ctx) ->
 %% @end
 %%--------------------------------------------------------------------
 -type info()::
-	{analog_input, Rid::integer(), Rchan::term(), Value::integer()} |
+	{analog_output, Rid::integer(), Rchan::term(), Value::integer()} |
 	{'EXIT', Pid::pid(), co_node_terminated} |
 	term().
 
@@ -699,35 +706,31 @@ handle_cast(_Msg, Ctx) ->
 			 {noreply, Ctx::#ctx{}, Timeout::timeout()} |
 			 {stop, Reason::term(), Ctx::#ctx{}}.
 
-handle_info({analog_input, Rid, Rchan, Value}, 
+handle_info({analog_output, Rid, Rchan, Value}, 
 	    Ctx=#ctx {node_id = Nid, items = OldItems}) ->
     %% Buffered analog input
-    ?dbg("handle_info: analog_input.",[]),
+    ?dbg("handle_info: analog_output.",[]),
     case take_item(Rid, Rchan, OldItems) of
 	false ->
-	    ?dbg("handle_info: analog_input, item ~p, ~p not found", 
+	    ?dbg("handle_info: analog_output, item ~p, ~p not found", 
 		 [Rid, Rchan]),
 	    {noreply,Ctx};
 	{value,Item,OtherItems} ->
-	    ?dbg("analog_input: received buffered call for ~.16#, ~p, ~p.",
+	    ?dbg("analog_output: received buffered call for ~.16#, ~p, ~p.",
 		 [Rid, Rchan, Value]),
-	    NewItems = exec_analog_input(Item,Nid,OtherItems,Value),
+	    NewItems = exec_analog_output(Item,Nid,OtherItems,Value),
 	    {noreply, Ctx#ctx { items = NewItems }}
     end;
 
 handle_info({tellstick_event,_Ref,EventData}, Ctx) ->
     ?dbg("handle_info: tellstick event ~p\n.",[EventData]),
-    case take_event(EventData, Ctx#ctx.events) of
-	false ->
-	    ?dbg("handle_info: tellstick_event, event ~p not found", 
-		 [EventData]),
-	    {noreply,Ctx};
-	E ->
-	    %% Send the event as a CAN notification
-	    %% It will then be handled by handle_cast above
-	    event_notify(E),
-	    {noreply,Ctx}
-    end;
+    handle_event(EventData, Ctx),
+    {noreply,Ctx};
+ 
+handle_info({gpio_interrupt, 0, 25, _Value} = Event, Ctx) ->
+    ?dbg("handle_info: gpio event for piface ~p\n.",[Event]),
+    piface_event(Ctx),
+    {noreply,Ctx};
 
 handle_info({gpio_interrupt, PinReg, Pin, Value} = Event, Ctx) ->
     ?dbg("handle_info: gpio event ~p\n.",[Event]),
@@ -736,17 +739,8 @@ handle_info({gpio_interrupt, PinReg, Pin, Value} = Event, Ctx) ->
 		 {pin_reg, PinReg}, 
 		 {pin, Pin}, 
 		 {data, Value}],
-    case take_event(EventData, Ctx#ctx.events) of
-	false ->
-	    ?dbg("handle_info: gpio_interrupt, event ~p not found", 
-		 [EventData]),
-	    {noreply,Ctx};
-	E ->
-	    %% Send the event as a CAN notification
-	    %% It will then be handled by handle_cast above
-	    event_notify(E),
-	    {noreply,Ctx}
-    end;
+    handle_event(EventData, Ctx),
+    {noreply,Ctx};
 
 handle_info({timeout,Ref,inhibit}, Ctx) ->
     ?dbg("handle_info: inhibit timer done.", []),
@@ -807,72 +801,446 @@ code_change(_OldVsn, Ctx, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
-stop_trace(undefined) ->
-    undefined;
-stop_trace(Trace) ->
-    lager:stop_trace(Trace),
-    undefined.
-
-%% enable/disable module debug trace
-set_trace(false, Trace) ->
-    Trace1 = stop_trace(Trace),
-    lager:set_loglevel(lager_console_backend, info),
-    {ok,Trace1};
-set_trace(true, undefined) ->
-    lager:trace_console([{module,?MODULE}], debug);
-set_trace(true, Trace) -> 
-    {ok,Trace}.
-
-
-full_filename(FileName) ->
-    case filename:dirname(FileName) of
-	"." when hd(FileName) =/= $. ->
-	    filename:join(code:priv_dir(rfzone), FileName);
-	_ -> 
-	    FileName
+%%--------------------------------------------------------------------
+%% Output - control devices etc
+%%--------------------------------------------------------------------
+handle_notify({RemoteId, _Index = ?MSG_POWER_ON, _SubInd, _Value}, Ctx) ->
+    ?dbg("handle_notify power on ~.16#: ID=~7.16.0#:~w, Value=~w", 
+	      [RemoteId, _Index, _SubInd, _Value]),
+    remote_power_on(RemoteId, Ctx#ctx.node_id, Ctx#ctx.items),
+    {noreply, Ctx};    
+handle_notify({RemoteId, _Index = ?MSG_POWER_OFF, _SubInd, _Value}, Ctx) ->
+    ?dbg("handle_notify power off ~.16#: ID=~7.16.0#:~w, Value=~w", 
+	      [RemoteId, _Index, _SubInd, _Value]),
+    remote_power_off(RemoteId, Ctx#ctx.node_id, Ctx#ctx.items),
+    {noreply, Ctx};    
+handle_notify({RemoteId, Index, SubInd, Value}, Ctx) ->
+    ?dbg("handle_notify ~.16#: ID=~7.16.0#:~w, Value=~w", 
+	      [RemoteId, Index, SubInd, Value]),
+    case take_item(RemoteId, SubInd, Ctx#ctx.items) of
+	false ->
+	    ?dbg("take_item = false", []),
+	    {noreply,Ctx};
+	{value,I,Is} ->
+	    case Index of
+		?MSG_DIGITAL ->
+		    Items = digital_output(I,Ctx#ctx.node_id,Is,Value),
+		    {noreply, Ctx#ctx { items=Items }};
+		?MSG_ANALOG ->
+		    Items = analog_output(I,Ctx#ctx.node_id,Is,Value),
+		    {noreply, Ctx#ctx { items=Items }};
+		?MSG_ENCODER ->
+		    Items = encoder_output(I,Ctx#ctx.node_id,Is,Value),
+		    {noreply, Ctx#ctx { items=Items }};
+		_ ->
+		    ?dbg("handle_notify ~.16#: ID=~7.16.0#:~w not handled.", 
+			 [RemoteId, Index, SubInd]),
+		    {noreply,Ctx}
+	    end
+    end.
+    
+%%--------------------------------------------------------------------
+%% Input - receiving device signals
+%%--------------------------------------------------------------------
+handle_event(EventData, Ctx) ->
+    case take_event(EventData, Ctx#ctx.events) of
+	false ->
+	    ?dbg("handle_info: event ~p not found", 
+		 [EventData]),
+	    ok;
+	E ->
+	    %% Send the event as a CAN notification
+	    %% It will then be handled by handle_cast above
+	    event_notify(E)
     end.
 
-subscribe(CoNode) ->
-    ?dbg("subscribe: IndexList = ~w",[?COMMANDS]),
-    lists:foreach(fun({{Index, _SubInd}, _Type, _Value}) ->
-			  co_api:extended_notify_subscribe(CoNode, Index)
-		  end, ?COMMANDS).
-unsubscribe(CoNode) ->
-    ?dbg("unsubscribe: IndexList = ~w",[?COMMANDS]),
-    lists:foreach(fun({{Index, _SubInd}, _Type, _Value}) ->
-			  co_api:extended_notify_unsubscribe(CoNode, Index)
-		  end, ?COMMANDS).
-    
-take_item(Rid, Rchan, Items) ->
-    take_item(Rid, Rchan, Items, []).
+event_notify(_E=#event {value = Value, type = Type, rid = Rid, rchan = Rchan}) ->
+    Data = <<Value:32/little>>,
+    co_api:notify(Rid, type2msg(Type),Rchan, Data).
 
-take_item(Rid, Rchan, [I=#item {rid=Rid,rchan=Rchan}|Is], Acc) ->
-    {value,I,Is++Acc};
-take_item(Rid, Rchan, [I|Is],Acc) ->
-    take_item(Rid,Rchan,Is,[I|Acc]);
-take_item(_Rid, _Rchan, [],_Acc) ->
-    false.
+piface_event(Ctx=#ctx {piface_mask = OldMask}) ->
+    case piface:read_input() of
+	OldMask ->
+	    %% No change, no action
+	    ok;
+	NewMask ->
+	    Changed = NewMask bxor OldMask,
+	    piface_event(Changed, 0, NewMask, Ctx)
+    end.
+
+piface_event(0, _Pin, _ValueMask, _Ctx) ->
+    ok;
+piface_event(ChangeMask, Pin, ValueMask, Ctx) ->
+    if ChangeMask band 1 ->
+	    piface_event(Pin, ValueMask band (1 bsl Pin), Ctx);
+       true ->
+	    do_nothing
+    end,
+    piface_event(ChangeMask bsl 1, Pin + 1, ValueMask, Ctx).
+
+piface_event(Pin, Value, Ctx) ->
+    EventData = [{protocol,gpio}, 
+		 {board, cpu}, 
+		 {pin_reg, 0}, 
+		 {pin, Pin}, 
+		 {data, Value}],
+
+    case take_event(EventData, Ctx#ctx.events) of
+	false ->
+	    ?dbg("handle_info: piface interrupt, event ~p not found", 
+		 [EventData]),
+	    {noreply,Ctx};
+	E ->
+	    %% Send the event as a CAN notification
+	    %% It will then be handled by handle_cast above
+	    event_notify(E),
+	    {noreply,Ctx}
+    end.
 
 
-take_event(Event, [E=#event { event=Pattern }|Ts]) ->
-    case match_event(Pattern, Event) of
-	true -> E;
-	false -> take_event(Event, Ts)
+%%--------------------------------------------------------------------
+%% Digital output
+%%--------------------------------------------------------------------
+digital_output(I, Nid, Is, Value) ->
+    Digital    = proplists:get_bool(digital, I#item.flags),
+    SpringBack = proplists:get_bool(springback, I#item.flags),
+    if Digital, SpringBack, Value =:= 1 ->
+	    Active = not I#item.active,
+	    exec_digital_output(I, Nid, Is, Active);
+       Digital, not SpringBack ->
+	    Active = Value =:= 1,
+	    if I#item.active =:= Active ->  %% no change, do noting
+		    ?dbg("digital_output: no change, no action.", []),
+		    [I | Is];
+	       true ->
+		    exec_digital_output(I, Nid, Is, Active)
+	    end;
+       Digital ->
+	    ?dbg("digital_output: no action.", []),
+	    ?dbg("item = ~s\n", [fmt_item(I)]),
+	    [I | Is];
+       true ->
+	    ?dbg("digital_output: not digital item.", []),
+	    [I | Is]
+    end.
+
+exec_digital_output(I, _Nid, Is, true) when I#item.inhibit =/= undefined ->
+    ?dbg("digital_output: inhibited.",[]),
+    [I|Is];   %% not allowed to turn on yet
+exec_digital_output(I, Nid, Is, Active) -> 
+    ?dbg("digital_output: executing.",[]),
+    ?dbg("item = ~s\n", [fmt_item(I)]),
+    case run(I,Active,[]) of
+	ok ->
+	    AValue = if Active -> 1; true -> 0 end,
+	    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.rchan, AValue),
+	    case proplists:get_value(inhibit, I#item.flags, 0) of
+		0 ->
+		    [I#item { active=Active} | Is];
+		T when Active ->
+		    TRef = erlang:start_timer(T, self(), inhibit),
+		    [I#item { active=Active, inhibit=TRef} | Is];
+		_ ->
+		    [I#item { active=Active} | Is]
+	    end;
+	_Error ->
+	    ?dbg("digital_output: run failed.",[]),
+	    [I | Is]
+    end.
+
+%%--------------------------------------------------------------------
+%% Analog output
+%%--------------------------------------------------------------------
+analog_output(I=#item {rid = Rid, rchan = Rchan, timer = Timer, flags = Flags}, 
+	     _Nid, Is, Value) ->
+    Analog = proplists:get_bool(analog, Flags),
+    if Analog ->
+	    stop_timer(Timer),
+	    ?dbg("analog_output: buffer call for ~.16#, ~p, ~p.",
+		 [Rid, Rchan, Value]),
+	    Tref = 
+		erlang:send_after(100, self(), {analog_output, Rid, Rchan, Value}),
+	    [I#item {timer = Tref} | Is];
+       true ->
+	    ?dbg("analog_output: not analog item ~p, ~p, ignored.",
+		 [Rid, Rchan]),
+	    [I | Is]
+    end.
+
+exec_analog_output(I=#item {rchan = Rchan, flags = Flags, active = Active}, 
+		  Nid, Is, Value) ->
+    ?dbg("exec_analog_output: updating item:.",[]),
+    ?dbg("item = ~s\n", [fmt_item(I)]),
+
+    Digital = proplists:get_bool(digital, Flags),
+    Min     = proplists:get_value(analog_min, Flags, 0),
+    Max     = proplists:get_value(analog_max, Flags, 255),
+    Style   = proplists:get_value(style, Flags, smooth),
+    %% Calculate actual level
+    %% Scale 0-65535 => Min-Max
+    IValue = trunc(Min + (Max-Min)*(Value/65535)),
+    %% scale Min-Max => 0-65535 (adjusting the slider)
+    RValue = trunc(65535*((IValue-Min)/(Max-Min))),
+
+    ?dbg("analog_output: calling driver with new value ~p",[IValue]),
+    case run(I,IValue,[{style, Style}]) of
+	ok ->
+	    %% For devices without digital control output_active
+	    %% is sent when level is changed from/to 0
+	    case {Digital,RValue == 0,Active} of 
+		{false, false, false} ->
+		    %% Slider "turned on"
+		    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE,Rchan, 1);
+		{false, true, true} ->
+		    %% Slider "turned off"
+		    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE,Rchan, 0);
+		_Any ->
+		    do_nothing
+	    end,
+	    notify(Nid, pdo1_tx, ?MSG_OUTPUT_VALUE,Rchan, RValue),
+	    NewI = I#item {level=RValue, timer = undefined, 
+			    active = ((RValue =/= 0) andalso not Digital)}, 
+	    [NewI | Is];
+	_Error ->
+	    [I | Is]
+    end.
+
+%%--------------------------------------------------------------------
+%% Encoder output
+%%--------------------------------------------------------------------
+encoder_output(_Nid, I, Is, _Value) ->
+    ?dbg("encoder_output: Not implemented yet.",[]),
+    [I|Is].
+
+%%--------------------------------------------------------------------
+%% Execution of both control and event signalling
+%%--------------------------------------------------------------------
+run(_I=#item {type = email}, false, _Style) ->
+    ?dbg("run email: state false, not sending.",[]),
+    ok;  %% do not send
+run(_I=#item {type = email, flags = Flags}, true, _Style) ->
+    Sender = proplists:get_value(sender, Flags),
+    Recipients = proplists:get_value(recipients, Flags),
+    Body = proplists:get_value(body, Flags),
+    ?dbg("run email: sending to ~p",[Recipients]),
+    %% fixme: setup callback and log failed attempts
+    Flags1 = lists:foldl(fun(F,Fs) -> proplists:delete(F, Fs) end, 
+			 Flags,
+			 [digital,springback,inhibit,
+			  sender,recipients,
+			  from,to,subject,body
+			 ]),
+    From = case proplists:get_value(from, Flags) of
+	       undefined -> [];
+	       F1 -> [["From: ", F1]]
+	   end,
+    To = case proplists:get_value(to, Flags) of
+	     undefined -> [];
+	     F3 -> [["To: ", F3]]
+	 end,
+    Subject = case proplists:get_value(subject, Flags) of
+		  undefined -> [];
+		  F2 -> [["Subject: ", F2]]
+	      end,
+    Date = case proplists:get_value(date, Flags, true) of
+	       true ->
+		   [["Date: ", smtp_util:rfc5322_timestamp()]];
+	       false ->
+		   [];
+	       Date1 when is_list(Date1) -> [["Date: ", Date1]]
+	   end,
+    MessageID = case proplists:get_value(message_id, Flags, true) of
+		    true ->
+			[["Message-ID:", smtp_util:generate_message_id()]];
+		    false ->
+			[];
+		    MID ->
+			[["Message-ID:", MID]]
+		end,
+    Headers1 = 
+	[ [H,"\r\n"] || 
+	    H <- From ++ To ++ Subject ++ Date ++ MessageID ],
+    Message = [Headers1,"\r\n",Body],
+    case gen_smtp_client:send({Sender, Recipients, Message}, Flags1) of
+	{ok,_Pid} ->
+	    ok;
+	Error -> Error
     end;
-take_event(_Event, []) ->
-    false.
-
-match_event([{K,V}|Kvs], Event) ->
-    case lists:keytake(K, 1, Event) of
-	{value,{K,V},Event1} -> match_event(Kvs,Event1);
-	_ -> false
+run(I=#item {type = exodm, unit = Mod, lchan = Fun, flags = Flags}, 
+    Active, _Style) ->
+    ExodmArgs = rpc_args(I, Active, proplists:get_value(args, Flags, []), []),
+    ?dbg("run exodm: M = ~p, F = ~p, A = ~p.",[Mod, Fun, ExodmArgs]),
+    case exoport:rpc(exodm_rpc, rpc, [atom_to_binary(Mod, latin1), 
+				      atom_to_binary(Fun, latin1), 
+				      ExodmArgs]) of
+	{reply,[{result,<<"accepted">>}],[]} ->
+	    ?dbg("run exodm result ok", []),
+	    ok;
+	_Other ->
+	    ?dbg("run exodm result ~p", [_Other]),
+	    ?ee("rpc call ~p:~p(~p) failed",[Mod, Fun, ExodmArgs]),
+	    {error, rpc_call_failed}
     end;
-match_event([], _Event) ->
-    true.
-	    
+run(_I=#item {type = gpio, unit = PinReg, lchan = Pin, flags = Flags}, 
+    true, _Style) ->
+    ?dbg("run gpio set: PinReg = ~p, Pin = ~p, Flags = ~p.",
+	 [PinReg, Pin, Flags]),
+    case proplists:get_value(board, Flags, cpu) of
+	cpu -> 
+	    ?dbg("action: gpio, set PinReg = ~w, Pin = ~p.", 
+			[PinReg,Pin]),
+	    gpio:set(PinReg,Pin);
+	piface ->
+	    ?dbg("action: gpio, piface set Pin = ~p.", [Pin]),
+	    piface:gpio_set(Pin);
+	_Other ->
+	    %% ignore
+	    ok
+    end;
+run(_I=#item {type = gpio, unit = PinReg, lchan = Pin, flags = Flags}, 
+    false, _Style) ->
+    ?dbg("run gpio clr: PinReg = ~p, Pin = ~p, Flags = ~p.",
+	 [PinReg, Pin, Flags]),
+    case proplists:get_value(board, Flags, cpu) of
+	cpu -> 
+	    ?dbg("action: gpio, clr PinReg = ~w, Pin = ~p.", 
+			[PinReg,Pin]),
+	    gpio:clr(PinReg,Pin);
+	piface ->
+	    ?dbg("action: gpio, piface clr Pin = ~p.", [Pin]),
+	    piface:gpio_clr(Pin);
+	_Other ->
+	    %% ignore
+	    ok
+    end;
+run(_I=#item {type = Type, unit = Unit, lchan = Chan}, Active, Style) ->
+    Args = [Unit,Chan,Active,Style],
+    ?dbg("action: Type = ~p, Args = ~w.", [Type, Args]),
+    try apply(tellstick_drv, Type, Args) of
+	ok ->
+	    ok;
+	Error ->
+	    ?dbg("tellstick_drv: error=~p.", [Error]),
+	    Error
+    catch
+	exit:Reason ->
+	    ?dbg("tellstick_drv: crash=~p.", [Reason]),
+	    {error,Reason};
+	error:Reason ->
+	    ?dbg("tellstick_drv: crash=~p.", [Reason]),
+	    {error,Reason}
+    end.
+%%--------------------------------------------------------------------
+%% Init of items/events
+%%--------------------------------------------------------------------
+power_on(Nid, ItemsToAdd) ->
+    power_command(Nid, ?MSG_OUTPUT_ADD, ItemsToAdd).
+
+power_off(Nid, ItemsToRemove) ->
+    power_command(Nid, ?MSG_OUTPUT_DEL, ItemsToRemove).
+
+power_command(_Nid, _Cmd, []) ->
+    ok;
+power_command(Nid, Cmd, [I | Items]) ->
+    Value = ((I#item.rid bsl 8) bor I#item.rchan) band 16#ffffffff, %% ??
+    notify(Nid, pdo1_tx, Cmd, I#item.rchan, Value),
+    init_if_gpio(Cmd, I),
+    power_command(Nid, Cmd, Items).
+
+init_if_gpio(?MSG_OUTPUT_ADD, 
+	     _I=#item {type = gpio, unit = PinReg, lchan = Pin, flags = Flags}) ->
+    case proplists:get_value(board, Flags, cpu) of
+	cpu -> 
+	    gpio:init(PinReg, Pin),
+	    gpio:set_direction(PinReg, Pin, out),
+	    ok;
+	piface ->	    
+	    ok;
+	_Board ->
+	    ?dbg("init_gpio_port: not supported board ~p",[_Board])
+    end;
+init_if_gpio(_Cmd, _I) -> %% Release case ??
+    ok.
+
+init_piface_if_needed([]) ->
+    false;
+init_piface_if_needed([_I=#item {type = gpio, flags = Flags} | Items]) ->
+    case proplists:get_value(board, Flags, cpu) of
+	piface ->
+	    piface:init(),
+	    piface:init_interrupt(), %% Maybe not always ??
+	    gpio:init(25), %% Define ??
+	    gpio:set_interrupt(25, falling),
+	    true;
+	_Board ->
+	    init_piface_if_needed(Items)
+    end;
+init_piface_if_needed([_I=#item {} | Items]) ->
+    init_piface_if_needed(Items).
+   
+reset_items(Items) ->
+    lists:foreach(
+      fun(I) ->
+	      ?dbg("reset_items: resetting ~p, ~p, ~p", 
+		   [I#item.type,I#item.unit,I#item.lchan]),
+	      %% timer:sleep(1000), %% Otherwise rfzone chokes ..
+	      Fs = I#item.flags,
+	      Analog = proplists:get_bool(analog, Fs),
+	      Digital = proplists:get_bool(digital, Fs),
+	      if Digital ->
+		      run(I,false,[]);
+		 Analog ->
+		      run(I,0,[{style, instant}])
+	      end
+      end,
+      Items).
+
+remote_power_off(_Rid, _Nid, _Is) ->
+    ok.
+
+remote_power_on(Rid, Nid, [I | Is]) when I#item.rid =:= Rid ->
+    %% add channel (local chan = remote chan)
+    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ADD, I#item.rchan,
+	   ((Rid bsl 8) bor I#item.rchan) band 16#fffffff),
+    %% update status
+    AValue = if I#item.active -> 1; true -> 0 end,
+    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.rchan, AValue),
+    %% if dimmer then send level
+    Analog = proplists:get_bool(analog, I#item.flags),
+    if Analog ->
+	    notify(Nid, pdo1_tx, ?MSG_ANALOG, I#item.rchan, I#item.level);
+       true ->
+	    ok
+    end,
+    remote_power_on(Rid, Nid, Is);
+remote_power_on(Rid, Nid, [_ | Is]) ->
+    remote_power_on(Rid, Nid, Is);
+remote_power_on(_Rid, _Nid, []) ->
+    ok.
+
+init_events([]) ->
+    ok;
+init_events([_E=#event {event = Pattern} | Rest]) ->
+    case proplists:get_value(protocol, Pattern) of
+	gpio -> 
+	    PinReg = proplists:get_value(pin_reg, Pattern, 0),
+	    Pin = proplists:get_value(pin, Pattern),
+	    Direction = proplists:get_value(interrupt, Pattern, none),
+	    case proplists:get_value(board, Pattern, cpu) of
+		cpu -> 
+		    gpio:set_interrupt(PinReg, Pin, Direction);
+		piface ->
+		    ok %% ??
+	    end;
+	_Other -> 
+	    ok
+    end,
+    init_events(Rest).
 
 
+%%--------------------------------------------------------------------
 %% Load configuration file
+%%--------------------------------------------------------------------
 load_config(File) ->
     case file:consult(File) of
 	{ok, Cs} ->
@@ -924,8 +1292,9 @@ load_conf([C | Cs], Conf, Is, Ts) ->
 	    {error, {unknown_config, C}}
     end;
 load_conf([], Conf, Is, Ts) ->
-    ?dbg("Loaded configuration: \n ",[]),
+    ?dbg("Loaded items: \n ",[]),
     lists:foreach(fun(I) -> ?dbg("~s", [fmt_item(I)]) end, Is),
+    ?dbg("Loaded events: \n ",[]),
     lists:foreach(fun(E) -> ?dbg("~s", [fmt_event(E)]) end, Ts),
     if Conf#conf.product =:= undefined ->
 	    {error, no_product};
@@ -933,6 +1302,81 @@ load_conf([], Conf, Is, Ts) ->
 	    {ok, Conf#conf {items=Is,events=Ts}}
     end.
 
+%%--------------------------------------------------------------------
+%% Localize items/events
+%%--------------------------------------------------------------------
+take_item(Rid, Rchan, Items) ->
+    take_item(Rid, Rchan, Items, []).
+
+take_item(Rid, Rchan, [I=#item {rid=Rid,rchan=Rchan}|Is], Acc) ->
+    {value,I,Is++Acc};
+take_item(Rid, Rchan, [I|Is],Acc) ->
+    take_item(Rid,Rchan,Is,[I|Acc]);
+take_item(_Rid, _Rchan, [],_Acc) ->
+    false.
+
+
+take_event(Event, [E=#event { event=Pattern }|Ts]) ->
+    case match_event(Pattern, Event) of
+	true -> E;
+	false -> take_event(Event, Ts)
+    end;
+take_event(_Event, []) ->
+    false.
+
+match_event([{interrupt,_V}|Kvs], Event) ->
+    %% ignore, only used for configuration
+    match_event(Kvs,Event);
+match_event([{K,V}|Kvs], Event) ->
+    case lists:keytake(K, 1, Event) of
+	{value,{K,V},Event1} -> match_event(Kvs,Event1);
+	_ -> false
+    end;
+match_event([], _Event) ->
+    true.
+	    
+%%--------------------------------------------------------------------
+%% Configuration of items
+%%--------------------------------------------------------------------
+item([], Item) ->
+    Item;
+item([{'remote-id', _Channel} | Rest], Item) ->
+    %% Already stored
+    item(Rest, Item);
+item([{'remote-channel', _Channel} | Rest], Item) ->
+    %% Already stored
+    item(Rest, Item);
+item([{protocol, Type} | Rest], Item) ->
+    item(Rest, Item#item {type = Type});
+item([{unit, Unit} | Rest], Item) ->
+    item(Rest, Item#item {unit = Unit});
+item([{channel, DevChannel} | Rest], Item) ->
+    item(Rest, Item#item {lchan = DevChannel});
+item([{flags, Flags} | Rest], Item) ->
+    case flags(Flags, []) of
+	error ->
+	    error;
+	F ->
+	    item(Rest, Item#item {flags = F})
+    end;
+item(_Other,_Item) ->
+    error.
+
+flags([], Flags) ->
+    Flags;
+flags([{Flag, true} | Rest], Flags) ->
+    flags(Rest, [Flag | Flags]);
+flags([{_Flag, false} | Rest], Flags) ->
+    flags(Rest, Flags);
+flags([{_Key, _Value} = Flag | Rest], Flags) ->
+    flags(Rest, [Flag | Flags]);
+flags(_Other, _Flags) ->
+    error.
+
+
+%%--------------------------------------------------------------------
+%% Verify item/event configuration
+%%--------------------------------------------------------------------
 verify_item(_I=#item {type = email, unit = _Unit, lchan = _Lchan,
 		      flags = Opts}) ->
     %% unit & lchan may be anything right now
@@ -1020,7 +1464,7 @@ verify_event(_I=#event {event = Event,
 
        fun() -> case lists:member({protocol, gpio}, Event) of
 		    true ->
-			verify_event(Event, [protocol,board,pin_reg,pin,data]);
+			verify_gpio_event(Event);
 		    false ->
 			verify_event(Event, [protocol,model,data]) 
 		end
@@ -1205,6 +1649,16 @@ verify_event([], _) ->
 verify_event(_, []) ->
     false.
 
+verify_gpio_event(Event) ->
+    %% Pin is mandatory
+    case lists:keymember(pin, 1, Event) of
+	true ->
+	    %% Optional 
+	    verify_event(Event, [protocol,board,pin_reg,pin,data,interrupt]);
+	false ->
+	    ?dbg("verify_gpio_event: missing pin",[])
+    end.
+		    
 
 verify_unit_range(nexa, Unit) 
   when Unit >= $A,
@@ -1333,443 +1787,9 @@ verify_flags(_Type, [_Flag | _Flags], _I) ->
 		   [_Type, _Flag]),
     {error, invalid_type_flag_combination}.
 
-rid_translate({xcobid, Func, Nid}) ->
-    ?XCOB_ID(co_lib:encode_func(Func), Nid);
-rid_translate({cobid, Func, Nid}) ->
-    ?COB_ID(co_lib:encode_func(Func), Nid).
-
-power_on(Nid, ItemsToAdd) ->
-    power_command(Nid, ?MSG_OUTPUT_ADD, ItemsToAdd).
-
-power_off(Nid, ItemsToRemove) ->
-    power_command(Nid, ?MSG_OUTPUT_DEL, ItemsToRemove).
-
-power_command(_Nid, _Cmd, []) ->
-    ok;
-power_command(Nid, Cmd, [I | Items]) ->
-    Value = ((I#item.rid bsl 8) bor I#item.rchan) band 16#ffffffff, %% ??
-    notify(Nid, pdo1_tx, Cmd, I#item.rchan, Value),
-    init_if_gpio(Cmd, I),
-    power_command(Nid, Cmd, Items).
-
-init_if_gpio(?MSG_OUTPUT_ADD, 
-	     _I=#item {type = gpio, unit = PinReg, lchan = Pin, flags = Flags}) ->
-    case proplists:get_value(board, Flags, cpu) of
-	cpu -> 
-	    gpio:init(PinReg, Pin),
-	    case proplists:get_value(interrupt, Flags, undefined) of
-		undefined -> ok;
-		Direction -> gpio:set_interrupt(PinReg, Pin, Direction)
-	    end;
-	piface ->
-	    ok;
-	_Board ->
-	    ?dbg("init_gpio_port: not supported board ~p",[_Board])
-    end;
-init_if_gpio(_Cmd, _I) -> %% Release case ??
-    ok.
-
-init_piface_if_needed([]) ->
-    false;
-init_piface_if_needed([_I=#item {type = gpio, flags = Flags} | Items]) ->
-    case proplists:get_value(board, Flags, cpu) of
-	piface ->
-	    piface:init(),
-	    true;
-	_Board ->
-	    init_piface_if_needed(Items)
-    end;
-init_piface_if_needed([_I=#item {} | Items]) ->
-    init_piface_if_needed(Items).
-   
-reset_items(Items) ->
-    lists:foreach(
-      fun(I) ->
-	      ?dbg("reset_items: resetting ~p, ~p, ~p", 
-		   [I#item.type,I#item.unit,I#item.lchan]),
-	      %% timer:sleep(1000), %% Otherwise rfzone chokes ..
-	      Fs = I#item.flags,
-	      Analog = proplists:get_bool(analog, Fs),
-	      Digital = proplists:get_bool(digital, Fs),
-	      if Digital ->
-		      run(I,false,[]);
-		 Analog ->
-		      run(I,0,[{style, instant}])
-	      end
-      end,
-      Items).
-
-handle_notify({RemoteId, _Index = ?MSG_POWER_ON, _SubInd, _Value}, Ctx) ->
-    ?dbg("handle_notify power on ~.16#: ID=~7.16.0#:~w, Value=~w", 
-	      [RemoteId, _Index, _SubInd, _Value]),
-    remote_power_on(RemoteId, Ctx#ctx.node_id, Ctx#ctx.items),
-    {noreply, Ctx};    
-handle_notify({RemoteId, _Index = ?MSG_POWER_OFF, _SubInd, _Value}, Ctx) ->
-    ?dbg("handle_notify power off ~.16#: ID=~7.16.0#:~w, Value=~w", 
-	      [RemoteId, _Index, _SubInd, _Value]),
-    remote_power_off(RemoteId, Ctx#ctx.node_id, Ctx#ctx.items),
-    {noreply, Ctx};    
-handle_notify({RemoteId, Index, SubInd, Value}, Ctx) ->
-    ?dbg("handle_notify ~.16#: ID=~7.16.0#:~w, Value=~w", 
-	      [RemoteId, Index, SubInd, Value]),
-    case take_item(RemoteId, SubInd, Ctx#ctx.items) of
-	false ->
-	    ?dbg("take_item = false", []),
-	    {noreply,Ctx};
-	{value,I,Is} ->
-	    case Index of
-		?MSG_DIGITAL ->
-		    Items = digital_input(I,Ctx#ctx.node_id,Is,Value),
-		    {noreply, Ctx#ctx { items=Items }};
-		?MSG_ANALOG ->
-		    Items = analog_input(I,Ctx#ctx.node_id,Is,Value),
-		    {noreply, Ctx#ctx { items=Items }};
-		?MSG_ENCODER ->
-		    Items = encoder_input(I,Ctx#ctx.node_id,Is,Value),
-		    {noreply, Ctx#ctx { items=Items }};
-		_ ->
-		    ?dbg("handle_notify ~.16#: ID=~7.16.0#:~w not handled.", 
-			 [RemoteId, Index, SubInd]),
-		    {noreply,Ctx}
-	    end
-    end.
-
-
-remote_power_off(_Rid, _Nid, _Is) ->
-    ok.
-
-remote_power_on(Rid, Nid, [I | Is]) when I#item.rid =:= Rid ->
-    %% add channel (local chan = remote chan)
-    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ADD, I#item.rchan,
-	   ((Rid bsl 8) bor I#item.rchan) band 16#fffffff),
-    %% update status
-    AValue = if I#item.active -> 1; true -> 0 end,
-    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.rchan, AValue),
-    %% if dimmer then send level
-    Analog = proplists:get_bool(analog, I#item.flags),
-    if Analog ->
-	    notify(Nid, pdo1_tx, ?MSG_ANALOG, I#item.rchan, I#item.level);
-       true ->
-	    ok
-    end,
-    remote_power_on(Rid, Nid, Is);
-remote_power_on(Rid, Nid, [_ | Is]) ->
-    remote_power_on(Rid, Nid, Is);
-remote_power_on(_Rid, _Nid, []) ->
-    ok.
-
-
-
-%%
-%% Digital input
-%%
-digital_input(I, Nid, Is, Value) ->
-    Digital    = proplists:get_bool(digital, I#item.flags),
-    SpringBack = proplists:get_bool(springback, I#item.flags),
-    if Digital, SpringBack, Value =:= 1 ->
-	    Active = not I#item.active,
-	    exec_digital_input(I, Nid, Is, Active);
-       Digital, not SpringBack ->
-	    Active = Value =:= 1,
-	    if I#item.active =:= Active ->  %% no change, do noting
-		    ?dbg("digital_input: no change, no action.", []),
-		    [I | Is];
-	       true ->
-		    exec_digital_input(I, Nid, Is, Active)
-	    end;
-       Digital ->
-	    ?dbg("digital_input: no action.", []),
-	    ?dbg("item = ~s\n", [fmt_item(I)]),
-	    [I | Is];
-       true ->
-	    ?dbg("digital_input: not digital item.", []),
-	    [I | Is]
-    end.
-
-exec_digital_input(I, _Nid, Is, true) when I#item.inhibit =/= undefined ->
-    ?dbg("digital_input: inhibited.",[]),
-    [I|Is];   %% not allowed to turn on yet
-exec_digital_input(I, Nid, Is, Active) -> 
-    ?dbg("digital_input: executing.",[]),
-    ?dbg("item = ~s\n", [fmt_item(I)]),
-    case run(I,Active,[]) of
-	ok ->
-	    AValue = if Active -> 1; true -> 0 end,
-	    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.rchan, AValue),
-	    case proplists:get_value(inhibit, I#item.flags, 0) of
-		0 ->
-		    [I#item { active=Active} | Is];
-		T when Active ->
-		    TRef = erlang:start_timer(T, self(), inhibit),
-		    [I#item { active=Active, inhibit=TRef} | Is];
-		_ ->
-		    [I#item { active=Active} | Is]
-	    end;
-	_Error ->
-	    ?dbg("digital_input: run failed.",[]),
-	    [I | Is]
-    end.
-
-analog_input(I=#item {rid = Rid, rchan = Rchan, timer = Timer, flags = Flags}, 
-	     _Nid, Is, Value) ->
-    Analog = proplists:get_bool(analog, Flags),
-    if Analog ->
-	    stop_timer(Timer),
-	    ?dbg("analog_input: buffer call for ~.16#, ~p, ~p.",
-		 [Rid, Rchan, Value]),
-	    Tref = 
-		erlang:send_after(100, self(), {analog_input, Rid, Rchan, Value}),
-	    [I#item {timer = Tref} | Is];
-       true ->
-	    ?dbg("analog_input: not analog item ~p, ~p, ignored.",
-		 [Rid, Rchan]),
-	    [I | Is]
-    end.
-
-exec_analog_input(I=#item {rchan = Rchan, flags = Flags, active = Active}, 
-		  Nid, Is, Value) ->
-    ?dbg("exec_analog_input: updating item:.",[]),
-    ?dbg("item = ~s\n", [fmt_item(I)]),
-
-    Digital = proplists:get_bool(digital, Flags),
-    Min     = proplists:get_value(analog_min, Flags, 0),
-    Max     = proplists:get_value(analog_max, Flags, 255),
-    Style   = proplists:get_value(style, Flags, smooth),
-    %% Calculate actual level
-    %% Scale 0-65535 => Min-Max
-    IValue = trunc(Min + (Max-Min)*(Value/65535)),
-    %% scale Min-Max => 0-65535 (adjusting the slider)
-    RValue = trunc(65535*((IValue-Min)/(Max-Min))),
-
-    ?dbg("analog_input: calling driver with new value ~p",[IValue]),
-    case run(I,IValue,[{style, Style}]) of
-	ok ->
-	    %% For devices without digital control output_active
-	    %% is sent when level is changed from/to 0
-	    case {Digital,RValue == 0,Active} of 
-		{false, false, false} ->
-		    %% Slider "turned on"
-		    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE,Rchan, 1);
-		{false, true, true} ->
-		    %% Slider "turned off"
-		    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE,Rchan, 0);
-		_Any ->
-		    do_nothing
-	    end,
-	    notify(Nid, pdo1_tx, ?MSG_OUTPUT_VALUE,Rchan, RValue),
-	    NewI = I#item {level=RValue, timer = undefined, 
-			    active = ((RValue =/= 0) andalso not Digital)}, 
-	    [NewI | Is];
-	_Error ->
-	    [I | Is]
-    end.
-
-event_notify(_E=#event {value = Value, type = Type, rid = Rid, rchan = Rchan}) ->
-    Data = <<Value:32/little>>,
-    co_api:notify(Rid, type2msg(Type),Rchan, Data).
-
-type2msg(digital) -> ?MSG_DIGITAL;
-type2msg(analog) -> ?MSG_ANALOG;
-type2msg(encoder) -> ?MSG_ENCODER.
-    
-notify(Nid, Func, Ix, Si, Value) ->
-    co_api:notify_from(Nid, Func, Ix, Si,co_codec:encode(Value, unsigned32)).
-    
-encoder_input(_Nid, I, Is, _Value) ->
-    ?dbg("encoder_input: Not implemented yet.",[]),
-    [I|Is].
-
-run(_I=#item {type = email}, false, _Style) ->
-    ?dbg("run email: state false, not sending.",[]),
-    ok;  %% do not send
-run(_I=#item {type = email, flags = Flags}, true, _Style) ->
-    Sender = proplists:get_value(sender, Flags),
-    Recipients = proplists:get_value(recipients, Flags),
-    Body = proplists:get_value(body, Flags),
-    ?dbg("run email: sending to ~p",[Recipients]),
-    %% fixme: setup callback and log failed attempts
-    Flags1 = lists:foldl(fun(F,Fs) -> proplists:delete(F, Fs) end, 
-			 Flags,
-			 [digital,springback,inhibit,
-			  sender,recipients,
-			  from,to,subject,body
-			 ]),
-    From = case proplists:get_value(from, Flags) of
-	       undefined -> [];
-	       F1 -> [["From: ", F1]]
-	   end,
-    To = case proplists:get_value(to, Flags) of
-	     undefined -> [];
-	     F3 -> [["To: ", F3]]
-	 end,
-    Subject = case proplists:get_value(subject, Flags) of
-		  undefined -> [];
-		  F2 -> [["Subject: ", F2]]
-	      end,
-    Date = case proplists:get_value(date, Flags, true) of
-	       true ->
-		   [["Date: ", smtp_util:rfc5322_timestamp()]];
-	       false ->
-		   [];
-	       Date1 when is_list(Date1) -> [["Date: ", Date1]]
-	   end,
-    MessageID = case proplists:get_value(message_id, Flags, true) of
-		    true ->
-			[["Message-ID:", smtp_util:generate_message_id()]];
-		    false ->
-			[];
-		    MID ->
-			[["Message-ID:", MID]]
-		end,
-    Headers1 = 
-	[ [H,"\r\n"] || 
-	    H <- From ++ To ++ Subject ++ Date ++ MessageID ],
-    Message = [Headers1,"\r\n",Body],
-    case gen_smtp_client:send({Sender, Recipients, Message}, Flags1) of
-	{ok,_Pid} ->
-	    ok;
-	Error -> Error
-    end;
-run(I=#item {type = exodm, unit = Mod, lchan = Fun, flags = Flags}, 
-    Active, _Style) ->
-    ExodmArgs = rpc_args(I, Active, proplists:get_value(args, Flags, []), []),
-    ?dbg("run exodm: M = ~p, F = ~p, A = ~p.",[Mod, Fun, ExodmArgs]),
-    case exoport:rpc(exodm_rpc, rpc, [atom_to_binary(Mod, latin1), 
-				      atom_to_binary(Fun, latin1), 
-				      ExodmArgs]) of
-	{reply,[{result,<<"accepted">>}],[]} ->
-	    ?dbg("run exodm result ok", []),
-	    ok;
-	_Other ->
-	    ?dbg("run exodm result ~p", [_Other]),
-	    ?ee("rpc call ~p:~p(~p) failed",[Mod, Fun, ExodmArgs]),
-	    {error, rpc_call_failed}
-    end;
-run(_I=#item {type = gpio, unit = PinReg, lchan = Pin, flags = Flags}, 
-    true, _Style) ->
-    ?dbg("run gpio set: PinReg = ~p, Pin = ~p, Flags = ~p.",
-	 [PinReg, Pin, Flags]),
-    case proplists:get_value(board, Flags, cpu) of
-	cpu -> 
-	    ?dbg("action: gpio, set PinReg = ~w, Pin = ~p.", 
-			[PinReg,Pin]),
-	    gpio:set(PinReg,Pin);
-	piface ->
-	    ?dbg("action: gpio, piface set Pin = ~p.", [Pin]),
-	    piface:gpio_set(Pin);
-	_Other ->
-	    %% ignore
-	    ok
-    end;
-run(_I=#item {type = gpio, unit = PinReg, lchan = Pin, flags = Flags}, 
-    false, _Style) ->
-    ?dbg("run gpio clr: PinReg = ~p, Pin = ~p, Flags = ~p.",
-	 [PinReg, Pin, Flags]),
-    case proplists:get_value(board, Flags, cpu) of
-	cpu -> 
-	    ?dbg("action: gpio, clr PinReg = ~w, Pin = ~p.", 
-			[PinReg,Pin]),
-	    gpio:clr(PinReg,Pin);
-	piface ->
-	    ?dbg("action: gpio, piface clr Pin = ~p.", [Pin]),
-	    piface:gpio_clr(Pin);
-	_Other ->
-	    %% ignore
-	    ok
-    end;
-run(_I=#item {type = Type, unit = Unit, lchan = Chan}, Active, Style) ->
-    Args = [Unit,Chan,Active,Style],
-    ?dbg("action: Type = ~p, Args = ~w.", [Type, Args]),
-    try apply(tellstick_drv, Type, Args) of
-	ok ->
-	    ok;
-	Error ->
-	    ?dbg("tellstick_drv: error=~p.", [Error]),
-	    Error
-    catch
-	exit:Reason ->
-	    ?dbg("tellstick_drv: crash=~p.", [Reason]),
-	    {error,Reason};
-	error:Reason ->
-	    ?dbg("tellstick_drv: crash=~p.", [Reason]),
-	    {error,Reason}
-    end.
-
-rpc_args(_I=#item {}, _Active, [], Acc) ->
-    lists:reverse(Acc);
-rpc_args(I=#item {}, Active, [{_Key, _Value} = Arg | Args], Acc) ->
-    rpc_args(I, Active, Args, [Arg | Acc]);
-rpc_args(I=#item {}, Active, [value = Key | Args], Acc) ->
-    rpc_args(I, Active, Args, [{Key, bool2int(Active)} | Acc]).
-
-bool2int(true) -> 1;
-bool2int(false) -> 0.
-    
-fmt_item(I) when is_record(I,item) ->
-    io_lib:format("{rid:~.16#,rchan:~p,type:~p,unit:~p,chan:~p,"
-		  "active:~p,level:~p,flags=~s}",
-		  [I#item.rid, I#item.rchan, 
-		   I#item.type,I #item.unit, I#item.lchan, 
-		   I#item.active, I#item.level,
-		   fmt_flags(I#item.flags)]).
-
-fmt_event(E) when is_record(E, event) ->
-    io_lib:format("{~p,rid:~.16#,rchan:~w,type:~w,value:~w}", 
-		  [E#event.event,E#event.rid,E#event.rchan, E#event.type,
-		   E#event.value]).
-    
-print_item(I) when is_record(I,item) ->
-    io:format("item: ~s\n", [fmt_item(I)]).
-
-print_event(E) when is_record(E, event) ->
-    io:format("event: ~s\n", [fmt_event(E)]).
-
-fmt_flags([Flag|Tail]) ->
-    [io_lib:format("~p ", [Flag]) | fmt_flags(Tail)];
-fmt_flags([]) -> "".
-
-  
-encode(on)      -> ?MSG_POWER_ON;
-encode(off)     -> ?MSG_POWER_OFF;
-encode(digital) -> ?MSG_DIGITAL;
-encode(analog)  -> ?MSG_ANALOG;
-encode(encoder) -> ?MSG_ENCODER.
-     
-item([], Item) ->
-    Item;
-item([{'remote-id', _Channel} | Rest], Item) ->
-    %% Already stored
-    item(Rest, Item);
-item([{'remote-channel', _Channel} | Rest], Item) ->
-    %% Already stored
-    item(Rest, Item);
-item([{protocol, Type} | Rest], Item) ->
-    item(Rest, Item#item {type = Type});
-item([{unit, Unit} | Rest], Item) ->
-    item(Rest, Item#item {unit = Unit});
-item([{channel, DevChannel} | Rest], Item) ->
-    item(Rest, Item#item {lchan = DevChannel});
-item([{flags, Flags} | Rest], Item) ->
-    case flags(Flags, []) of
-	error ->
-	    error;
-	F ->
-	    item(Rest, Item#item {flags = F})
-    end;
-item(_Other,_Item) ->
-    error.
-
-flags([], Flags) ->
-    Flags;
-flags([{Flag, true} | Rest], Flags) ->
-    flags(Rest, [Flag | Flags]);
-flags([{_Flag, false} | Rest], Flags) ->
-    flags(Rest, Flags);
-flags([{_Key, _Value} = Flag | Rest], Flags) ->
-    flags(Rest, [Flag | Flags]);
-flags(_Other, _Flags) ->
-    error.
-
+%%--------------------------------------------------------------------
+%% Conversion to bert format
+%%--------------------------------------------------------------------
 bert_format({simulated, _Version}) ->
     [{'tellstick-device', simulated}];
 bert_format({Device, Version}) ->
@@ -1803,11 +1823,107 @@ bert_format_flags([Key | Rest], Acc) when is_atom(Key) ->
     bert_format_flags(Rest, [{Key, true} | Acc]);
 bert_format_flags([], Acc) -> Acc.
 
-		      
+		          
+%%--------------------------------------------------------------------
+%% Debug printing
+%%--------------------------------------------------------------------
+fmt_item(I) when is_record(I,item) ->
+    io_lib:format("{rid:~.16#,rchan:~p,type:~p,unit:~p,chan:~p,"
+		  "active:~p,level:~p,flags=~s}",
+		  [I#item.rid, I#item.rchan, 
+		   I#item.type,I #item.unit, I#item.lchan, 
+		   I#item.active, I#item.level,
+		   fmt_flags(I#item.flags)]).
+
+fmt_event(E) when is_record(E, event) ->
+    io_lib:format("{~p,rid:~.16#,rchan:~w,type:~w,value:~w}", 
+		  [E#event.event,E#event.rid,E#event.rchan, E#event.type,
+		   E#event.value]).
+    
+print_item(I) when is_record(I,item) ->
+    io:format("item: ~s\n", [fmt_item(I)]).
+
+print_event(E) when is_record(E, event) ->
+    io:format("event: ~s\n", [fmt_event(E)]).
+
+fmt_flags([Flag|Tail]) ->
+    [io_lib:format("~p ", [Flag]) | fmt_flags(Tail)];
+fmt_flags([]) -> "".
+
+  
+%%--------------------------------------------------------------------
+%% Debug trace control
+%%--------------------------------------------------------------------
+stop_trace(undefined) ->
+    undefined;
+stop_trace(Trace) ->
+    lager:stop_trace(Trace),
+    undefined.
+
+set_trace(false, Trace) ->
+    Trace1 = stop_trace(Trace),
+    lager:set_loglevel(lager_console_backend, info),
+    {ok,Trace1};
+set_trace(true, undefined) ->
+    lager:trace_console([{module,?MODULE}], debug);
+set_trace(true, Trace) -> 
+    {ok,Trace}.
+
+
+%%--------------------------------------------------------------------
+%% Utilities
+%%--------------------------------------------------------------------
+rid_translate({xcobid, Func, Nid}) ->
+    ?XCOB_ID(co_lib:encode_func(Func), Nid);
+rid_translate({cobid, Func, Nid}) ->
+    ?COB_ID(co_lib:encode_func(Func), Nid).
+
+
+type2msg(digital) -> ?MSG_DIGITAL;
+type2msg(analog) -> ?MSG_ANALOG;
+type2msg(encoder) -> ?MSG_ENCODER.
+    
+notify(Nid, Func, Ix, Si, Value) ->
+    co_api:notify_from(Nid, Func, Ix, Si,co_codec:encode(Value, unsigned32)).
+    
+
+full_filename(FileName) ->
+    case filename:dirname(FileName) of
+	"." when hd(FileName) =/= $. ->
+	    filename:join(code:priv_dir(rfzone), FileName);
+	_ -> 
+	    FileName
+    end.
+
+subscribe(CoNode) ->
+    ?dbg("subscribe: IndexList = ~w",[?COMMANDS]),
+    lists:foreach(fun({{Index, _SubInd}, _Type, _Value}) ->
+			  co_api:extended_notify_subscribe(CoNode, Index)
+		  end, ?COMMANDS).
+unsubscribe(CoNode) ->
+    ?dbg("unsubscribe: IndexList = ~w",[?COMMANDS]),
+    lists:foreach(fun({{Index, _SubInd}, _Type, _Value}) ->
+			  co_api:extended_notify_unsubscribe(CoNode, Index)
+		  end, ?COMMANDS).
+rpc_args(_I=#item {}, _Active, [], Acc) ->
+    lists:reverse(Acc);
+rpc_args(I=#item {}, Active, [{_Key, _Value} = Arg | Args], Acc) ->
+    rpc_args(I, Active, Args, [Arg | Acc]);
+rpc_args(I=#item {}, Active, [value = Key | Args], Acc) ->
+    rpc_args(I, Active, Args, [{Key, bool2int(Active)} | Acc]).
+
+bool2int(true) -> 1;
+bool2int(false) -> 0.
+    
+encode(on)      -> ?MSG_POWER_ON;
+encode(off)     -> ?MSG_POWER_OFF;
+encode(digital) -> ?MSG_DIGITAL;
+encode(analog)  -> ?MSG_ANALOG;
+encode(encoder) -> ?MSG_ENCODER.
+     
 stop_timer(undefined) ->
     undefined;
 stop_timer(Ref) ->
     erlang:cancel_timer(Ref).
 
 
-    
