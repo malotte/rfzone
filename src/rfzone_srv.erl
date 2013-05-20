@@ -107,11 +107,12 @@
 
 -record(event,
 	{
-	  event,
+	  pattern,  
 	  rid,    %% EFID|SFID
 	  rchan,  %% 1..254
 	  type,   %% digital,analog,encoder
-	  value   %% depend on type
+	  value,  %% depend on type
+	  polarity = false %% Switch polarity of value
 	}).
 
 %% Loop data
@@ -724,7 +725,7 @@ handle_info({analog_output, Rid, Rchan, Value},
 
 handle_info({tellstick_event,_Ref,EventData}, Ctx) ->
     ?dbg("handle_info: tellstick event ~p\n.",[EventData]),
-    handle_event(EventData, Ctx),
+    handle_event(EventData, dummy, Ctx),
     {noreply,Ctx};
  
 handle_info({gpio_interrupt, 0, 25, _Value} = Event, Ctx) ->
@@ -737,9 +738,8 @@ handle_info({gpio_interrupt, PinReg, Pin, Value} = Event, Ctx) ->
     EventData = [{protocol,gpio}, 
 		 {board, cpu}, 
 		 {pin_reg, PinReg}, 
-		 {pin, Pin}, 
-		 {data, Value}],
-    handle_event(EventData, Ctx),
+		 {pin, Pin}],
+    handle_event(EventData, Value, Ctx),
     {noreply,Ctx};
 
 handle_info({timeout,Ref,inhibit}, Ctx) ->
@@ -842,7 +842,7 @@ handle_notify({RemoteId, Index, SubInd, Value}, Ctx) ->
 %%--------------------------------------------------------------------
 %% Input - receiving device signals
 %%--------------------------------------------------------------------
-handle_event(EventData, Ctx) ->
+handle_event(EventData, ActualValue, Ctx) ->
     case take_event(EventData, Ctx#ctx.events) of
 	false ->
 	    ?dbg("handle_event: event ~p not found", [EventData]),
@@ -850,11 +850,22 @@ handle_event(EventData, Ctx) ->
 	E ->
 	    %% Send the event as a CAN notification
 	    %% It will then be handled by handle_cast above
-	    event_notify(E)
+	    event_notify(ActualValue, E)
     end.
 
-event_notify(_E=#event {value = Value, type = Type, rid = Rid, rchan = Rchan}) ->
-    Data = <<Value:32/little>>,
+event_notify(ActualValue,
+	     _E=#event {value = Value, type = Type, rid = Rid, rchan = Rchan, polarity = Polarity}) ->
+    %% Value can be hardcoded in event definition or given by eventdata
+    V = 
+	if Value =:= value -> ActualValue;
+	   true -> Value
+	end,
+    %% If polarity flag is true value should be inverted
+    V1 = 
+	if Polarity -> V bxor 1;
+	   true -> V
+	end,
+    Data = <<V1:32/little>>,
     co_api:notify(Rid, type2msg(Type),Rchan, Data).
 
 piface_event(Ctx=#ctx {piface_mask = OldMask}) ->
@@ -875,18 +886,22 @@ piface_event(0, _Pin, _NewMask, Ctx) ->
     Ctx;
 piface_event(ChangeMask, Pin, NewMask, Ctx) ->
     if (ChangeMask band 1) =:= 1 ->
+	    NewValue = NewMask band (1 bsl Pin),
 	    EventData = [{protocol,gpio}, 
-			 {board, cpu}, 
+			 {board, piface}, 
 			 {pin_reg, 0}, 
 			 {pin, Pin}, 
-			 {data, NewMask band (1 bsl Pin)}],
+			 {interrupt, interrupt(NewValue)}],
 	    ?dbg("piface_event: event ~p.", [EventData]),
-	    handle_event(EventData, Ctx);
+	    handle_event(EventData, NewValue, Ctx);
        true ->
 	    do_nothing
     end,
     piface_event(ChangeMask bsr 1, Pin + 1, NewMask, Ctx).
 
+interrupt(1) -> rising;
+interrupt(0) -> falling.
+    
 %%--------------------------------------------------------------------
 %% Digital output
 %%--------------------------------------------------------------------
@@ -1209,7 +1224,7 @@ remote_power_on(_Rid, _Nid, []) ->
 
 init_events([]) ->
     ok;
-init_events([_E=#event {event = Pattern} | Rest]) ->
+init_events([_E=#event {pattern = Pattern} | Rest]) ->
     case proplists:get_value(protocol, Pattern) of
 	gpio -> 
 	    PinReg = proplists:get_value(pin_reg, Pattern, 0),
@@ -1254,13 +1269,15 @@ load_conf([C | Cs], Conf, Is, Ts) ->
 		      [Item, Reason]),
 		    load_conf(Cs, Conf, Is, Ts)
 	    end;
-	{event, Event, {Rid,RChan,Type,Value}} ->
+	{event, Pattern, {Rid,RChan,Type,Value}} ->
 	    RCobId = rid_translate(Rid),
-	    Item = #event { event = Event,
+	    Polarity = proplists:get_value(polarity, Pattern, false),
+	    Item = #event { pattern = Pattern,
 			    rid   = RCobId,
 			    rchan = RChan,
 			    type  = Type,
-			    value = Value },
+			    value = Value,
+			    polarity = Polarity},
 	    case verify_event(Item) of
 		ok ->
 		    load_conf(Cs, Conf, Is, [Item | Ts]);
@@ -1305,23 +1322,29 @@ take_item(_Rid, _Rchan, [],_Acc) ->
     false.
 
 
-take_event(Event, [E=#event { event=Pattern }|Ts]) ->
-    case match_event(Pattern, Event) of
+take_event(EventData, [E=#event { pattern=Pattern }|Ts]) ->
+    case match_event(Pattern, EventData) of
 	true -> E;
-	false -> take_event(Event, Ts)
+	false -> take_event(EventData, Ts)
     end;
-take_event(_Event, []) ->
+take_event(_EventData, []) ->
     false.
 
-match_event([{interrupt,_V}|Kvs], Event) ->
-    %% ignore, only used for configuration
-    match_event(Kvs,Event);
-match_event([{K,V}|Kvs], Event) ->
-    case lists:keytake(K, 1, Event) of
-	{value,{K,V},Event1} -> match_event(Kvs,Event1);
+match_event([{interrupt = K,V}|Kvs], EventData) ->
+    case lists:keytake(K, 1, EventData) of
+	{value,{K,V},EventData1} -> match_event(Kvs,EventData1); %% Same 
+	{value,{K,both},EventData1} -> match_event(Kvs,EventData1); %% Both 
 	_ -> false
     end;
-match_event([], _Event) ->
+match_event([{polarity,_V}|Kvs], EventData) ->
+    %% Ignore now
+    match_event(Kvs,EventData);
+match_event([{K,V}|Kvs], EventData) ->
+    case lists:keytake(K, 1, EventData) of
+	{value,{K,V},EventData1} -> match_event(Kvs,EventData1);
+	_ -> false
+    end;
+match_event([], _EventData) ->
     true.
 	    
 %%--------------------------------------------------------------------
@@ -1424,7 +1447,7 @@ verify_app_started(App) ->
 	    {error, list_to_atom(atom_to_list(App) ++ "_not_runnning")}
     end.
 
-verify_event(_I=#event {event = Event, 
+verify_event(_I=#event {pattern = Pattern, 
 			rid   = _RCobId,
 			rchan = RChan,
 			type  = Type,
@@ -1451,11 +1474,11 @@ verify_event(_I=#event {event = Event,
 		end
        end, {error, bad_value_range},
 
-       fun() -> case lists:member({protocol, gpio}, Event) of
+       fun() -> case lists:member({protocol, gpio}, Pattern) of
 		    true ->
-			verify_gpio_event(Event);
+			verify_gpio_event(Pattern);
 		    false ->
-			verify_event(Event, [protocol,model,data]) 
+			verify_event(Pattern, [protocol,model,data]) 
 		end
        end,
        {error, bad_event}
@@ -1643,7 +1666,8 @@ verify_gpio_event(Event) ->
     case lists:keymember(pin, 1, Event) of
 	true ->
 	    %% Optional 
-	    verify_event(Event, [protocol,board,pin_reg,pin,data,interrupt]);
+	    verify_event(Event, 
+			 [protocol,board,pin_reg,pin,data,interrupt,polarity]);
 	false ->
 	    ?dbg("verify_gpio_event: missing pin",[])
     end.
@@ -1826,7 +1850,7 @@ fmt_item(I) when is_record(I,item) ->
 
 fmt_event(E) when is_record(E, event) ->
     io_lib:format("{~p,rid:~.16#,rchan:~w,type:~w,value:~w}", 
-		  [E#event.event,E#event.rid,E#event.rchan, E#event.type,
+		  [E#event.pattern,E#event.rid,E#event.rchan, E#event.type,
 		   E#event.value]).
     
 print_item(I) when is_record(I,item) ->
