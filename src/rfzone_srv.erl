@@ -874,32 +874,18 @@ piface_event(0, _Pin, _NewMask, Ctx) ->
     ?dbg("piface_event: all sent.", []),
     Ctx;
 piface_event(ChangeMask, Pin, NewMask, Ctx) ->
-    if ChangeMask band 1 ->
-	    piface_event(Pin, NewMask band (1 bsl Pin), Ctx);
+    if (ChangeMask band 1) =:= 1 ->
+	    EventData = [{protocol,gpio}, 
+			 {board, cpu}, 
+			 {pin_reg, 0}, 
+			 {pin, Pin}, 
+			 {data, NewMask band (1 bsl Pin)}],
+	    ?dbg("piface_event: event ~p.", [EventData]),
+	    handle_event(EventData, Ctx);
        true ->
 	    do_nothing
     end,
     piface_event(ChangeMask bsr 1, Pin + 1, NewMask, Ctx).
-
-piface_event(Pin, Value, Ctx) ->
-    EventData = [{protocol,gpio}, 
-		 {board, cpu}, 
-		 {pin_reg, 0}, 
-		 {pin, Pin}, 
-		 {data, Value}],
-    ?dbg("piface_event: event ~p.", [EventData]),
-
-    case take_event(EventData, Ctx#ctx.events) of
-	false ->
-	    ?dbg("handle_info: piface interrupt, event ~p not found", 
-		 [EventData]),
-	    do_nothing;
-	E ->
-	    %% Send the event as a CAN notification
-	    %% It will then be handled by handle_cast above
-	    event_notify(E)
-    end.
-
 
 %%--------------------------------------------------------------------
 %% Digital output
