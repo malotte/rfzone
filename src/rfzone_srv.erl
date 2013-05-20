@@ -729,8 +729,8 @@ handle_info({tellstick_event,_Ref,EventData}, Ctx) ->
  
 handle_info({gpio_interrupt, 0, 25, _Value} = Event, Ctx) ->
     ?dbg("handle_info: gpio event for piface ~p\n.",[Event]),
-    piface_event(Ctx),
-    {noreply,Ctx};
+    NewCtx = piface_event(Ctx),
+    {noreply, NewCtx};
 
 handle_info({gpio_interrupt, PinReg, Pin, Value} = Event, Ctx) ->
     ?dbg("handle_info: gpio event ~p\n.",[Event]),
@@ -845,8 +845,7 @@ handle_notify({RemoteId, Index, SubInd, Value}, Ctx) ->
 handle_event(EventData, Ctx) ->
     case take_event(EventData, Ctx#ctx.events) of
 	false ->
-	    ?dbg("handle_info: event ~p not found", 
-		 [EventData]),
+	    ?dbg("handle_event: event ~p not found", [EventData]),
 	    ok;
 	E ->
 	    %% Send the event as a CAN notification
@@ -862,21 +861,25 @@ piface_event(Ctx=#ctx {piface_mask = OldMask}) ->
     case piface:read_input() of
 	OldMask ->
 	    %% No change, no action
-	    ok;
+	    ?dbg("piface_event: read input ~p, no change.", [OldMask]),
+	    Ctx;
 	NewMask ->
+	    ?dbg("piface_event: read input new ~p, old ~p.", 
+		 [NewMask, OldMask]),
 	    Changed = NewMask bxor OldMask,
-	    piface_event(Changed, 0, NewMask, Ctx)
+	    piface_event(Changed, 0, NewMask, Ctx#ctx {piface_mask = NewMask})
     end.
 
-piface_event(0, _Pin, _ValueMask, _Ctx) ->
-    ok;
-piface_event(ChangeMask, Pin, ValueMask, Ctx) ->
+piface_event(0, _Pin, _NewMask, Ctx) ->
+    ?dbg("piface_event: all sent.", []),
+    Ctx;
+piface_event(ChangeMask, Pin, NewMask, Ctx) ->
     if ChangeMask band 1 ->
-	    piface_event(Pin, ValueMask band (1 bsl Pin), Ctx);
+	    piface_event(Pin, NewMask band (1 bsl Pin), Ctx);
        true ->
 	    do_nothing
     end,
-    piface_event(ChangeMask bsl 1, Pin + 1, ValueMask, Ctx).
+    piface_event(ChangeMask bsl 1, Pin + 1, NewMask, Ctx).
 
 piface_event(Pin, Value, Ctx) ->
     EventData = [{protocol,gpio}, 
@@ -884,17 +887,17 @@ piface_event(Pin, Value, Ctx) ->
 		 {pin_reg, 0}, 
 		 {pin, Pin}, 
 		 {data, Value}],
+    ?dbg("piface_event: event ~p.", [EventData]),
 
     case take_event(EventData, Ctx#ctx.events) of
 	false ->
 	    ?dbg("handle_info: piface interrupt, event ~p not found", 
 		 [EventData]),
-	    {noreply,Ctx};
+	    do_nothing;
 	E ->
 	    %% Send the event as a CAN notification
 	    %% It will then be handled by handle_cast above
-	    event_notify(E),
-	    {noreply,Ctx}
+	    event_notify(E)
     end.
 
 

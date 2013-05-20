@@ -75,7 +75,8 @@ init_per_suite(Config) ->
     start_exo(), 
     close_old_nodes([dm_node()]),
     install_exodm(),
-    rfzone_customer_server:start(),
+    rfzone_customer_server:start([{http_port, 
+				   ct:get_config(notification_port)}]),
     Config.
 
 %%--------------------------------------------------------------------
@@ -106,7 +107,6 @@ init_per_testcase(TestCase, Config) ->
     tc_init(TestCase, Config).
 
 tc_init(gpio_interrupt, Config) ->
-    configure_api(Config),
     configure_exodm(Config),
     Config;
 tc_init(_TC, Config) ->
@@ -199,22 +199,23 @@ install_exodm() ->
 
     ok.
 
-configure_api(Config) ->
-    exodm_json_api:set_exodmrc_dir(?config(data_dir, Config)).
-
 configure_exodm(Config) ->
-    exodm_json_api:parse_result(
+    exodm_json_api:set_exodmrc_dir(?config(data_dir, Config)),
+    Yang = filename:join(?config(data_dir, Config),?RF_YANG),
+    case filelib:is_regular(Yang) of
+	true -> ok;
+	false -> ct:fail("File ~p not found", [Yang])
+    end,
+    configure_rfzone_account(Yang, notification_url()).
+
+configure_rfzone_account(File, Url) ->
+       exodm_json_api:parse_result(
       exodm_json_api:create_account(?RF_ACCOUNT, 
 				    "tony@rogvall.se", 
 				    ?RF_PASS, 
 				    "RfZone"), 
       "ok"),
     
-    File = filename:join(?config(data_dir, Config),?RF_YANG),
-    case filelib:is_regular(File) of
-	true -> ok;
-	false -> ct:fail("File ~p not found", [File])
-    end,
     exodm_json_api:parse_result(
       exodm_json_api:create_yang_module(?RF_ACCOUNT, 
 					?RF_YANG,
@@ -226,7 +227,7 @@ configure_exodm(Config) ->
       exodm_json_api:create_config_set(?RF_ACCOUNT, 
 				       ?RF_SET,
 				       ?RF_YANG, 
-				       notification_url()),
+				       Url),
       "ok"),
     exodm_json_api:parse_result(
       exodm_json_api:create_device_type(?RF_ACCOUNT, 
@@ -237,7 +238,7 @@ configure_exodm(Config) ->
     exodm_json_api:parse_result(
       exodm_json_api:create_device_group(?RF_ACCOUNT, 
 					 ?RF_GROUP,
-					 notification_url()),
+					 Url),
       "ok"),
     
      exodm_json_api:parse_result(

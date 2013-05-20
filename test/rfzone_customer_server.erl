@@ -28,7 +28,7 @@
 -include("rfzone.hrl").
 
 %% API
--export([start/0, 
+-export([start/1, 
 	 stop/0,
 	 receive_notification/1]).
 
@@ -48,8 +48,8 @@
 	  client::pid()
 	}).
 
-start() ->
-    gen_server:start({local, ?SERVER}, ?MODULE, [], []).
+start(Args) ->
+    gen_server:start({local, ?SERVER}, ?MODULE, Args, []).
 
 stop() ->
     gen_server:call(?SERVER, stop).
@@ -64,9 +64,10 @@ receive_notification(TimeOut)  ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-init(_Args) ->
-     ?dbg("init: args ~p", [_Args]),
-    {ok, Http} = rfzone_http_server:start(ct:get_config(notification_port)),
+init(Args) ->
+     ?dbg("init: args ~p", [Args]),
+    HttpPort = proplists:get_value(http_port, Args, 8980),
+    {ok, Http} = rfzone_http_server:start(HttpPort),
     {ok, #ctx {http = Http}}.
 
 %%--------------------------------------------------------------------
