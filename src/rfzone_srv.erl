@@ -17,7 +17,7 @@
 %%%-------------------------------------------------------------------
 %%% @author Tony Rogvall <tony@rogvall.se>
 %%% @author Malotte Westman Lönne <malotte@malotte.net>
-%%% @copyright (C) 2012, Tony Rogvall
+%%% @copyright (C) 2013, Tony Rogvall
 %%% @doc
 %%%    rfZone control server.
 %%%    For detailed description of the functionality see the overview.
@@ -75,6 +75,9 @@
 %% Default rfzone version
 -define(DEF_VERSION, v1).
 
+%% The cpu pin for access to piface board
+-define(PIFACE_PIN, 25).
+
 %% rfZone configuration from file
 -record(conf,
 	{
@@ -131,7 +134,6 @@
 	  piface_mask = 16#ff::integer(), %% Values for piface pins
 	  trace
 	}).
-
 
 %% For dialyzer
 -type start_options()::{co_node, CoNode::node_identity()} |
@@ -378,6 +380,18 @@ debug(TrueOrFalse) when is_boolean(TrueOrFalse) ->
 
 init(Args) ->
     lager:info("~p: init: args = ~p,\n pid = ~p\n", [?MODULE, Args, self()]),
+
+    %% if on_host is true no io-pins are accessible
+    case application:get_env(rfzone, on_host) of
+	{ok, true} ->
+	    ?dbg("Running on host", []),
+	    put(on_host, true);
+	_NotTrue ->
+	    ?dbg("Running on device", []),
+	    put(on_host, false)
+    end,
+    
+    %% CANOpen node mandatory
     case proplists:get_value(co_node, Args) of
 	undefined ->
 	    ?dbg("init: No CANOpen node given.", []),
@@ -597,8 +611,10 @@ handle_call(dump, _From,
 		      events = Events,
 		      items = Items}) ->
     io:format("Ctx: CoNode = ~p, Device = ~p,", [CoNode, Device]),
-    io:format("NodeId = {~p, ~.16#}, Items=\n", [Type, Nid]),
+    io:format("NodeId = {~p, ~.16#},\n", [Type, Nid]),
+    io:format("Items=\n", []),
     lists:foreach(fun(Item) -> print_item(Item) end, Items),
+    io:format("Events=\n", []),
     lists:foreach(fun(Evt) -> print_event(Evt) end, Events),
     {reply, ok, Ctx};
 
@@ -844,7 +860,7 @@ handle_notify({RemoteId, Index, SubInd, Value}, Ctx) ->
 %% Input - receiving device signals
 %%--------------------------------------------------------------------
 handle_event(EventData, ActualValue, Ctx) ->
-    case take_event(EventData, Ctx#ctx.events) of
+    case take_event(Ctx#ctx.events, EventData) of
 	false ->
 	    ?dbg("handle_event: event ~p not found", [EventData]),
 	    ok;
@@ -880,7 +896,7 @@ event_notify(ActualValue,_E=#event {value = Value,
     
 
 piface_event(Ctx=#ctx {piface_mask = OldMask}) ->
-    case piface:read_input() of
+    case call_piface(read_input, []) of
 	OldMask ->
 	    %% No change, no action
 	    ?dbg("piface_event: read input ~p, no change.", [OldMask]),
@@ -1098,11 +1114,11 @@ run(_I=#item {type = gpio, unit = PinReg, lchan = Pin, flags = Flags},
     case proplists:get_value(board, Flags, cpu) of
 	cpu -> 
 	    ?dbg("action: gpio, set PinReg = ~w, Pin = ~p.", 
-			[PinReg,Pin]),
-	    gpio:set(PinReg,Pin);
+		 [PinReg, Pin]),
+	    call_gpio(set, [PinReg, Pin]);
 	piface ->
 	    ?dbg("action: gpio, piface set Pin = ~p.", [Pin]),
-	    piface:gpio_set(Pin);
+	    call_piface(gpio_set, [Pin]);
 	_Other ->
 	    %% ignore
 	    ok
@@ -1114,11 +1130,11 @@ run(_I=#item {type = gpio, unit = PinReg, lchan = Pin, flags = Flags},
     case proplists:get_value(board, Flags, cpu) of
 	cpu -> 
 	    ?dbg("action: gpio, clr PinReg = ~w, Pin = ~p.", 
-			[PinReg,Pin]),
-	    gpio:clr(PinReg,Pin);
+		 [PinReg, Pin]),
+	    call_gpio(clr, [PinReg, Pin]);
 	piface ->
 	    ?dbg("action: gpio, piface clr Pin = ~p.", [Pin]),
-	    piface:gpio_clr(Pin);
+	    call_piface(gpio_clr, [Pin]);
 	_Other ->
 	    %% ignore
 	    ok
@@ -1161,8 +1177,8 @@ init_if_gpio(?MSG_OUTPUT_ADD,
 	     _I=#item {type = gpio, unit = PinReg, lchan = Pin, flags = Flags}) ->
     case proplists:get_value(board, Flags, cpu) of
 	cpu -> 
-	    gpio:init(PinReg, Pin),
-	    gpio:set_direction(PinReg, Pin, out),
+	    call_gpio(init, [PinReg, Pin]),
+	    call_gpio(set_direction, [PinReg, Pin, out]),
 	    ok;
 	piface ->	    
 	    ok;
@@ -1177,10 +1193,10 @@ init_piface_if_needed([]) ->
 init_piface_if_needed([_I=#item {type = gpio, flags = Flags} | Items]) ->
     case proplists:get_value(board, Flags, cpu) of
 	piface ->
-	    piface:init(),
-	    piface:init_interrupt(), %% Maybe not always ??
-	    gpio:init(25), %% Define ??
-	    gpio:set_interrupt(25, falling),
+	    call_piface(init, []),
+	    call_piface(init_interrupt, []), %% Maybe not always ??
+	    call_gpio(init, [?PIFACE_PIN]), 
+	    call_gpio(set_interrupt, [?PIFACE_PIN, falling]),
 	    true;
 	_Board ->
 	    init_piface_if_needed(Items)
@@ -1238,7 +1254,7 @@ init_events([_E=#event {pattern = Pattern} | Rest]) ->
 	    Direction = proplists:get_value(interrupt, Pattern, none),
 	    case proplists:get_value(board, Pattern, cpu) of
 		cpu -> 
-		    gpio:set_interrupt(PinReg, Pin, Direction);
+		    call_gpio(set_interrupt, [PinReg, Pin, Direction]);
 		piface ->
 		    ok %% ??
 	    end;
@@ -1330,19 +1346,19 @@ take_item(_Rid, _Rchan, [],_Acc) ->
     false.
 
 
-take_event(EventData, [E=#event { pattern=Pattern }|Ts]) ->
+take_event([E=#event { pattern=Pattern }|Ts], EventData) ->
     case match_event(Pattern, EventData) of
 	true -> E;
-	false -> take_event(EventData, Ts)
+	false -> take_event(Ts, EventData)
     end;
-take_event(_EventData, []) ->
+take_event([], _EventData) ->
     false.
 
 match_event([{Key,_Value}|Kvs], EventData) 
   when Key == polarity;
        Key == interrupt ->
     %% Ignore now
-    match_event(Kvs,EventData);
+    match_event(Kvs, EventData);
 match_event([{Key,Value}|Kvs], EventData) ->
     case lists:keytake(Key, 1, EventData) of
 	{value,{Key,Value},EventData1} -> match_event(Kvs,EventData1);
@@ -1444,11 +1460,16 @@ verify_general(I=#item {type = Type, unit = Unit, lchan = Channel, flags = Flags
     end.
 
 verify_app_started(App) ->
-    case lists:keymember(App, 1, application:which_applications()) of
-	true ->
+    case get(on_host) of
+	true -> 
 	    ok;
-	false ->
-	    {error, list_to_atom(atom_to_list(App) ++ "_not_runnning")}
+	_Other -> 
+	    case lists:keymember(App, 1, application:which_applications()) of
+		true ->
+		    ok;
+		false ->
+		    {error, list_to_atom(atom_to_list(App) ++ "_not_runnning")}
+	    end
     end.
 
 verify_event(_I=#event {pattern = Pattern, 
@@ -1472,6 +1493,9 @@ verify_event(_I=#event {pattern = Pattern,
 		    analog when Value >= 0, Value =< 16#ffff ->
 			true;
 		    digital when Value =:= 0; Value =:= 1 ->
+			true;
+		    digital when Value =:= value ->
+			%% Value will be taken from input
 			true;
 		    encoder -> is_integer(Value);
 		    _ -> false
@@ -1944,3 +1968,15 @@ stop_timer(Ref) ->
     erlang:cancel_timer(Ref).
 
 
+%% if on_host is true no io-pins are accessible
+call_piface(F, Args) ->
+    case get(on_host) of
+	true -> apply(io_stub, F, Args);
+	_Else -> apply(piface, F, Args)
+    end.
+
+call_gpio(F, Args) ->
+    case get(on_host) of
+	true -> apply(io_stub, F, Args);
+	_Else -> apply(gpio, F, Args)
+    end.
