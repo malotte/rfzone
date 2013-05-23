@@ -29,20 +29,11 @@
 
 -include_lib("common_test/include/ct.hrl").
 -include("rfzone.hrl").
+-include("rfzone_test.hrl").
 
--define(RF_ACCOUNT, "rfzone").
--define(RF_ADMIN, "rfzone-admin").
--define(RF_PASS, "wewontechcrunch2011").
--define(RF_YANG, "rfzone.yang").
--define(RF_SET, "rfzset").
--define(RF_TYPE, "rfztype").
--define(RF_PROT, "exodm").
--define(RF_GROUP, "rfzgroup").
--define(RF_DEVICE, "rfzone1").
--define(RF_SERV_KEY, "1").
--define(RF_DEV_KEY, "99").
+-import(rfzone_test_lib, [configure_rfzone_account/2,
+			  json_notification/1]).
 
--define(v(Pat, Expr), {Pat,Pat} = {Pat, Expr}).
 
 %%--------------------------------------------------------------------
 %% @spec suite() -> Info
@@ -148,13 +139,11 @@ gpio_interrupt(_Config) ->
     {PinReg, Pin} = ct:get_config(gpio_pin),
     %% Simulate gpio interrupt
     RfZone ! {gpio_interrupt, PinReg, Pin, 1},
-    {?RF_DEVICE, PinReg, Pin, 1}  = 
-	json_notification("gpio-interrupt","rfzone:gpio-interrupt", unknown),
+    {?RF_DEVICE, PinReg, Pin, 1} = json_notification("gpio-interrupt"),
 
     %% Simulate gpio interrupt
     RfZone ! {gpio_interrupt, PinReg, Pin, 0},
-    {?RF_DEVICE, PinReg, Pin, 0}  = 
-	json_notification("gpio-interrupt","rfzone:gpio-interrupt", unknown),
+    {?RF_DEVICE, PinReg, Pin, 0} = json_notification("gpio-interrupt"),
     ok.
 
 %%--------------------------------------------------------------------
@@ -208,57 +197,6 @@ configure_exodm(Config) ->
     end,
     configure_rfzone_account(Yang, notification_url()).
 
-configure_rfzone_account(File, Url) ->
-       exodm_json_api:parse_result(
-      exodm_json_api:create_account(?RF_ACCOUNT, 
-				    "tony@rogvall.se", 
-				    ?RF_PASS, 
-				    "RfZone"), 
-      "ok"),
-    
-    exodm_json_api:parse_result(
-      exodm_json_api:create_yang_module(?RF_ACCOUNT, 
-					?RF_YANG,
-					"user",
-					File),
-      "ok"),
-    
-    exodm_json_api:parse_result(
-      exodm_json_api:create_config_set(?RF_ACCOUNT, 
-				       ?RF_SET,
-				       ?RF_YANG, 
-				       Url),
-      "ok"),
-    exodm_json_api:parse_result(
-      exodm_json_api:create_device_type(?RF_ACCOUNT, 
-					?RF_TYPE,
-					?RF_PROT),
-      "ok"),
-    
-    exodm_json_api:parse_result(
-      exodm_json_api:create_device_group(?RF_ACCOUNT, 
-					 ?RF_GROUP,
-					 Url),
-      "ok"),
-    
-     exodm_json_api:parse_result(
-      exodm_json_api:create_device(?RF_ACCOUNT, 
-				   ?RF_DEVICE,
-				   ?RF_TYPE, 
-				   ?RF_SERV_KEY, 
-				   ?RF_DEV_KEY),
-       "ok"),
-     exodm_json_api:parse_result(
-      exodm_json_api:add_config_set_members(?RF_ACCOUNT, 
-					    [?RF_SET], 
-					    [?RF_DEVICE]),
-       "ok"),
-     exodm_json_api:parse_result(
-      exodm_json_api:add_device_group_members(?RF_ACCOUNT, 
-					      [?RF_GROUP],
-					      [?RF_DEVICE]),
-      "ok").
-
 remove_system() ->
     ExodmDir = code:lib_dir(exodm),
     Res2 = os:cmd("cd " ++ ExodmDir ++ "; n=dm make stop"),
@@ -295,42 +233,6 @@ store_logs(Exodm) ->
 	    end
     end.
 
-json_notification(Request, Callback, TransId) ->
-    {http_request, Body, Sender} = 
-	rfzone_customer_server:receive_notification(3000),
-    verify_notification(Request, Body, Callback, TransId, Sender).
-
-verify_notification(Request, Body, Callback, _TransId, Sender) ->
-    String = binary_to_list(Body),
-    {ok, {struct, Values}} = json2:decode_string(String),
-    ?v({"jsonrpc","2.0"}, lists:keyfind("jsonrpc",1,Values)),
-    case lists:keyfind("method",1,Values) of
-	{"method", "rfzone:gpio-interrupt"} ->
-	    {"id",TransIdString} = lists:keyfind("id",1,Values),
-%%	    Sender ! "OK",
-	    Sender ! json_ok(TransIdString),
-	    {"params", {struct, Params}} = lists:keyfind("params",1, Values),
-	    {"device-id", DeviceId} = lists:keyfind("device-id",1,Params),
-	    {"pin-register", PinReg} = lists:keyfind("pin-register",1,Params),
-	    {"pin", Pin} = lists:keyfind("pin",1,Params),
-	    {"value", Value} = lists:keyfind("value",1,Params),
-	    {DeviceId, PinReg, Pin, Value};
-	{"method", _Other} ->
-	    %% See if unknown (while developing)
-	    if Callback == unknown ->
-		    ct:pal("~p notification: ~p",[Request, Body]),
-		    ok;
-	       true ->
-		    %% Something is wrong
-		    ct:fail("~p unexpected notification: ~p",[Request, Body])
-	    end
-    end.
-
-json_ok(TransId) ->
-    json2:encode({struct, [{"jsonrpc", "2.0"},
-			   {"id", TransId},
-			   {"result", {struct,[{"result", "0"}]}}]}).
-    
 notification_url() ->
     Port = ct:get_config(notification_port),
     "https://localhost:" ++ integer_to_list(Port) ++ "/callback".

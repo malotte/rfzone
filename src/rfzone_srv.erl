@@ -913,11 +913,11 @@ piface_event(0, _Pin, _NewMask, Ctx) ->
     Ctx;
 piface_event(ChangeMask, Pin, NewMask, Ctx) ->
     if (ChangeMask band 1) =:= 1 ->
-	    NewValue = NewMask band (1 bsl Pin),
+	    NewValue = (NewMask bsr Pin) band 1,
 	    EventData = [{protocol,gpio}, 
 			 {board, piface}, 
 			 {pin, Pin}],
-	    ?dbg("piface_event: event ~p.", [EventData]),
+	    ?dbg("piface_event: event ~p, value ~p.", [EventData, NewValue]),
 	    handle_event(EventData, NewValue, Ctx);
        true ->
 	    do_nothing

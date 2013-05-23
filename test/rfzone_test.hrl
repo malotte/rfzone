@@ -17,25 +17,26 @@
 %%% @author Malotte W Lönne <malotte@malotte.net>
 %%% @copyright (C) 2013, Tony Rogvall
 %%% @doc
-%%%    Defines needed for seazone.
+%%%    Defines needed for rfzone test.
 %%%
-%%% Created : 27:th September 2012 by Malotte W Lönne
+%%% Created : May 2013 by Malotte W Lönne
 %%% @end
 %%%-------------------------------------------------------------------
--ifndef(RFZONE_HRL).
--define(RFZONE_HRL, true).
+-ifndef(RFZONE_TEST_HRL).
+-define(RFZONE_TEST_HRL, true).
 
-%% Switching to lager (ale)
--define(dbg(Format, Args),
- 	lager:debug("~s(~p): " ++ Format, 
-		    [?MODULE, self() | Args])).
+-define(RF_ACCOUNT, "rfzone").
+-define(RF_ADMIN, "rfzone-admin").
+-define(RF_PASS, "wewontechcrunch2011").
+-define(RF_YANG, "rfzone.yang").
+-define(RF_SET, "rfzset").
+-define(RF_TYPE, "rfztype").
+-define(RF_PROT, "exodm").
+-define(RF_GROUP, "rfzgroup").
+-define(RF_DEVICE, "rfzone1").
+-define(RF_SERV_KEY, "1").
+-define(RF_DEV_KEY, "99").
 
-%% Convenience defines (also in canopen.hrl)
--ifndef(ee).
--define(ee(String, List), error_logger:error_msg(String, List)).
--endif.
--ifndef(ei).
--define(ei(String, List),  error_logger:info_msg(String, List)).
--endif.
+-define(v(Pat, Expr), {Pat,Pat} = {Pat, Expr}).
 
 -endif.

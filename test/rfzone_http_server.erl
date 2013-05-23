@@ -18,8 +18,10 @@
 
 
 -include_lib("exo/include/exo_http.hrl").
+-include_lib("lager/include/log.hrl").
 
 -export([start/1,
+	 start_link/1,
 	 handle_body/3]).
 
 -import(exo_http_server, [response/5]).
@@ -40,6 +42,21 @@ start(Port) ->
 
 %%-----------------------------------------------------------------------------
 %% @doc
+%%  Starts an http server with handle request callback to this module.
+%%
+%% @end
+%%-----------------------------------------------------------------------------
+-spec start_link(Port::integer()) -> 
+		   {ok, ChildPid::pid()} |
+		   {error, Reason::term()}.
+
+start_link(Port) ->
+    ct:pal("rfzone_http_server: start: port ~p",[Port]),
+    exo_http_server:start_link(Port, [{request_handler, 
+				       {?MODULE, handle_body}}]).
+
+%%-----------------------------------------------------------------------------
+%% @doc
 %%  Callback to handle a request body.
 %%
 %% @end
@@ -52,30 +69,37 @@ start(Port) ->
 			 {error, Reason::term()}.
 
 handle_body(Socket, Request, Body) ->
+    ?debug("rfzone_http_server: handle_body: body ~s.",[Body]),
     ct:pal("rfzone_http_server: handle_body: body ~s.",[Body]),
     Url = Request#http_request.uri,
     if Request#http_request.method == 'GET',
        Url#url.path == "/quit" ->
+	    ?debug("rfzone_http_server: handle_body: quit.",[]),
 	    ct:pal("rfzone_http_server: handle_body: quit.",[]),
 	    response(Socket, "close", 200, "OK", "QUIT"),
 	    exo_socket:shutdown(Socket, write),
 	    stop;
        Url#url.path == "/test" ->
+	    ?debug("rfzone_http_server: handle_body: test.",[]),
 	    ct:pal("rfzone_http_server: handle_body: test.",[]),
 	    response(Socket, undefined, 200, "OK", "OK"),
 	    ok;
        Url#url.path == "/callback" ->
+	    ?debug("rfzone_http_server: handle_body: callback.",[]),
 	    ct:pal("rfzone_http_server: handle_body: callback.",[]),
 	    case whereis(rfzone_customer_server) of
 		Pid when is_pid(Pid) ->
-		    ct:pal("rfzone_http_server: handle_body: send to ~p.",[Pid]),
+		    ?debug("rfzone_http_server: handle_body: send to ~p.",[Pid]),		    ct:pal("rfzone_http_server: handle_body: send to ~p.",[Pid]),
 		    Pid ! {http_request, Body, self()};
 		_Other ->
+		    ?debug("rfzone_http_server: handle_body: no one to send to.",[]),
 		    ct:pal("rfzone_http_server: handle_body: no one to send to.",[]),
 		    do_nothing
 	    end,
 	    receive
 		Reply ->
+		    ?debug("rfzone_http_server: handle_body: send reply ~p.",
+			   [Reply]),
 		    ct:pal("rfzone_http_server: handle_body: send reply ~p.",
 			   [Reply]),
 		    response(Socket, undefined, 200, "OK", lists:flatten(Reply))
@@ -84,6 +108,7 @@ handle_body(Socket, Request, Body) ->
 	    end,
 	    ok;
        true ->
+	    ?debug("rfzone_http_server: handle_body: path ~p.",[Url#url.path]),
 	    ct:pal("rfzone_http_server: handle_body: path ~p.",[Url#url.path]),
 	    exo_http_server:response(Socket, undefined, 404, "Not Found", 
 				     "Object not found"),

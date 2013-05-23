@@ -30,7 +30,11 @@
 %% API
 -export([start/1, 
 	 stop/0,
-	 receive_notification/1]).
+	 config_exodm/0,
+	 config_exodm/2,
+	 receive_notification/2,
+	 start_receive_all/0,
+	 stop_receive_all/0]).
 
 %% gen_server callbacks
 -export([init/1, 
@@ -40,10 +44,14 @@
 	 terminate/2, 
 	 code_change/3]).
 
+-import(rfzone_test_lib, [configure_rfzone_account/2,
+			  notification_url/1,
+			  verify_notification/3]).
 -define(SERVER, ?MODULE). 
 
 -record(ctx,
 	{
+	  state = single,
 	  http::pid(),
 	  client::pid()
 	}).
@@ -54,8 +62,22 @@ start(Args) ->
 stop() ->
     gen_server:call(?SERVER, stop).
 
-receive_notification(TimeOut)  ->
-    gen_server:call(?SERVER, {notification, TimeOut}).
+config_exodm() -> 
+    config_exodm("rfzone.yang", notification_url(8980)).
+
+config_exodm(Yang, Url) 
+  when is_list(Yang), is_list(Url) ->
+    gen_server:call(?SERVER, {config_exodm, Yang, Url}).
+
+receive_notification(Request, TimeOut) 
+  when is_integer(TimeOut), TimeOut > 0 ->
+    gen_server:call(?SERVER, {notification, Request, TimeOut}, TimeOut + 1000).
+
+start_receive_all()  ->
+    gen_server:cast(?SERVER, start_receive_all).
+
+stop_receive_all()  ->
+    gen_server:cast(?SERVER, stop_receive_all).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -82,16 +104,23 @@ init(Args) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-handle_call({notification, TimeOut} = _Request, _From, Ctx) ->
-    ?dbg("handle_call: request ~p", [_Request]),
-    receive {http_request, _Body, _Sender} = HR ->
-	    {reply, HR, Ctx}
+handle_call({config_exodm, Yang, Url} = Req, _From, Ctx) ->
+    ?dbg("handle_call: ~p",[Req]),
+    Result = configure_rfzone_account(Yang, Url),
+    {reply, Result, Ctx};
+
+handle_call({notification, Request, TimeOut} = Notif, _From, Ctx) ->
+    ?dbg("handle_call: notification ~p", [Notif]),
+    receive {http_request, Body, Sender} = HR ->
+	    ?dbg("handle_call: received ~p", [HR]),
+	    Result = verify_notification(Request, Body, Sender),
+	    {reply, Result, Ctx}
     after TimeOut ->
 	    {reply, timeout, Ctx}
     end;
 
 handle_call(stop, _From, Ctx) ->
-    ?dbg("stop:",[]),
+    ?dbg("handle_call: stop:",[]),
     {stop, normal, ok, Ctx};
 
 handle_call(_Request, _From, Ctx) ->
@@ -105,6 +134,12 @@ handle_call(_Request, _From, Ctx) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
+handle_cast(start_receive_all, Ctx) ->
+    ?dbg("handle_cast: start_receive_all",[]),
+    {noreply, Ctx#ctx {state = multi}};
+handle_cast(stop_receive_all, Ctx) ->
+    ?dbg("handle_cast: start_receive_all",[]),
+    {noreply, Ctx#ctx {state = single}};
 handle_cast(_Msg, Ctx) ->
     ?dbg("handle_cast: unknown msg ~p", [_Msg]),
     {noreply, Ctx}.
@@ -116,6 +151,12 @@ handle_cast(_Msg, Ctx) ->
 %% 
 %% @end
 %%--------------------------------------------------------------------
+handle_info({http_request, Body, Sender} = HR, Ctx=#ctx {state = multi}) ->
+    ?dbg("handle_info: expected http_request ~p.",[HR]),
+    Result = verify_notification(any, Body, Sender),
+    ?dbg("handle_info: verification result ~p.",[Result]),    
+    {noreply, Ctx};
+  
 handle_info({http_request, _Body, _Sender} = HR, Ctx) ->
     ?dbg("handle_info: unexpected http_request ~p.",[HR]),
     {noreply, Ctx};
