@@ -66,9 +66,9 @@ stop() ->
 config_exodm() -> 
     config_exodm("rfzone.yang", notification_url(8980)).
 
-config_exodm(Yang, Url) 
-  when is_list(Yang), is_list(Url) ->
-    gen_server:call(?SERVER, {config_exodm, Yang, Url}).
+config_exodm(Yang, Port) 
+  when is_list(Yang), is_integer(Port) ->
+    gen_server:call(?SERVER, {config_exodm, Yang, notification_url(Port)}).
 
 receive_notification(Request, TimeOut) 
   when is_integer(TimeOut), TimeOut > 0 ->
