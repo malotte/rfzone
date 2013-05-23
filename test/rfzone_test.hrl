@@ -31,7 +31,7 @@
 -define(RF_YANG, "rfzone.yang").
 -define(RF_SET, "rfzset").
 -define(RF_TYPE, "rfztype").
--define(RF_PROT, "exodm").
+-define(RF_PROT, "exodm_bert").
 -define(RF_GROUP, "rfzgroup").
 -define(RF_DEVICE1, "rfzone1").
 -define(RF_DEVICE2, "rfzone2").

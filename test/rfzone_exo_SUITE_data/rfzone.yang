@@ -20,14 +20,16 @@ module rfzone
       type enumeration {
 	enum on {
 	  description "Item is on.";
+          value 1;
 	}
 	enum off {
 	  description "Item is off.";
+          value 0;
 	}
       }
     }
 
-    rpc digital_output {
+    rpc digital-output {
       description "Turn On/Off.";
       input {
         uses exo:std-request;

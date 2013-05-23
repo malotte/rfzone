@@ -281,7 +281,7 @@ analog_output(RemoteId, Channel, Level)
 %%--------------------------------------------------------------------
 -spec digital_output(RemoteId::integer(),
 		    Channel::integer(),
-		    Action::on | off) -> ok | {error, Error::term()}.
+		    Action::on | off | integer()) -> ok | {error, Error::term()}.
 
 digital_output(RemoteId, Channel, Action) 
   when is_integer(RemoteId) andalso
@@ -293,7 +293,12 @@ digital_output(RemoteId, Channel, Action)
   when is_integer(RemoteId) andalso
        is_integer(Channel) andalso
        Action =:= onoff -> %% Springback
-    gen_server:cast(?SERVER, {digital_output, RemoteId, Channel, 1}).
+    gen_server:cast(?SERVER, {digital_output, RemoteId, Channel, 1});
+digital_output(RemoteId, Channel, Action) 
+  when is_integer(RemoteId) andalso
+       is_integer(Channel) andalso
+       (Action =:= 0 orelse Action =:= 1) -> 
+    gen_server:cast(?SERVER, {digital_output, RemoteId, Channel, Action}).
 
 %%--------------------------------------------------------------------
 %% @doc

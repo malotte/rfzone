@@ -34,7 +34,8 @@
 	 config_exodm/2,
 	 receive_notification/2,
 	 start_receive_all/0,
-	 stop_receive_all/0]).
+	 stop_receive_all/0,
+	 digital_output/3]).
 
 %% gen_server callbacks
 -export([init/1, 
@@ -79,6 +80,8 @@ start_receive_all()  ->
 stop_receive_all()  ->
     gen_server:cast(?SERVER, stop_receive_all).
 
+digital_output(Device, Channel, Action) ->
+    gen_server:call(?SERVER, {digital_output, Device, Channel, Action}).
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
@@ -90,6 +93,7 @@ init(Args) ->
     ?dbg("init: args ~p", [Args]),
     HttpPort = proplists:get_value(http_port, Args, 8980),
     {ok, Http} = rfzone_http_server:start(HttpPort),
+    exodm_json_api:set_exodmrc_dir(code:lib_dir(rfzone)), %% ??
     {ok, #ctx {http = Http}}.
 
 %%--------------------------------------------------------------------
@@ -118,6 +122,17 @@ handle_call({notification, Request, TimeOut} = Notif, _From, Ctx) ->
     after TimeOut ->
 	    {reply, timeout, Ctx}
     end;
+
+handle_call({digital_output, Device, Channel, Action} = Req, _From, Ctx) ->
+    ?dbg("handle_call: ~p", [Req]),
+    Result = exodm_json_api:json_request("rfzone:digital-output",
+					 [{"device-id", Device},
+					  {"item-id", 16#20001},
+					  {"channel", Channel},
+					  {"action", Action}],
+					 integer_to_list(random()),
+					 user),
+    {reply, Result, Ctx};
 
 handle_call(stop, _From, Ctx) ->
     ?dbg("handle_call: stop:",[]),
@@ -189,3 +204,8 @@ code_change(_OldVsn, Ctx, _Extra) ->
 
 
 
+random() ->
+    %% Initialize
+    random:seed(now()),
+    %% Retreive
+    random:uniform(16#1000000).
