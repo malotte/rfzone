@@ -64,9 +64,13 @@ configure_rfzone_account(File, Url) ->
 					 Url),
       "ok"),
     
+    configure_device(?RF_DEVICE1),
+    configure_device(?RF_DEVICE2).
+
+configure_device(Device) ->
      exodm_json_api:parse_result(
       exodm_json_api:create_device(?RF_ACCOUNT, 
-				   ?RF_DEVICE,
+				   Device,
 				   ?RF_TYPE, 
 				   ?RF_SERV_KEY, 
 				   ?RF_DEV_KEY),
@@ -74,14 +78,13 @@ configure_rfzone_account(File, Url) ->
      exodm_json_api:parse_result(
       exodm_json_api:add_config_set_members(?RF_ACCOUNT, 
 					    [?RF_SET], 
-					    [?RF_DEVICE]),
+					    [Device]),
        "ok"),
      exodm_json_api:parse_result(
       exodm_json_api:add_device_group_members(?RF_ACCOUNT, 
 					      [?RF_GROUP],
-					      [?RF_DEVICE]),
+					      [Device]),
       "ok").
-
 
 json_notification(Request) ->
     rfzone_customer_server:receive_notification(Request, 3000).

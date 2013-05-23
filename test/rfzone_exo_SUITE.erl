@@ -139,11 +139,11 @@ gpio_interrupt(_Config) ->
     {PinReg, Pin} = ct:get_config(gpio_pin),
     %% Simulate gpio interrupt
     RfZone ! {gpio_interrupt, PinReg, Pin, 1},
-    {?RF_DEVICE, PinReg, Pin, 1} = json_notification("gpio-interrupt"),
+    {?RF_DEVICE1, PinReg, Pin, 1} = json_notification("gpio-interrupt"),
 
     %% Simulate gpio interrupt
     RfZone ! {gpio_interrupt, PinReg, Pin, 0},
-    {?RF_DEVICE, PinReg, Pin, 0} = json_notification("gpio-interrupt"),
+    {?RF_DEVICE1, PinReg, Pin, 0} = json_notification("gpio-interrupt"),
     ok.
 
 %%--------------------------------------------------------------------

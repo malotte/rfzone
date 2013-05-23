@@ -15,6 +15,41 @@ module rfzone
 
     description "Schema for rfzone device management";
 
+    typedef on-off {
+      description "On/Off.";
+      type enumeration {
+	enum on {
+	  description "Item is on.";
+	}
+	enum off {
+	  description "Item is off.";
+	}
+      }
+    }
+
+    rpc digital_output {
+      description "Turn On/Off.";
+      input {
+        uses exo:std-request;
+
+	leaf item-id {
+	  type uint32;
+	}
+	leaf channel {
+	  type uint32;
+	}
+	leaf action {
+          type on-off;
+	}
+      }
+      // Output only contains status.
+      output {
+        description
+          "Output sent in response to a digital output request";
+        
+        uses exo:std-callback;
+      }
+    }
 
     rpc gpio-interrupt {
         description "Handle gpio interrupt.";

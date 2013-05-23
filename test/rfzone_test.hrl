@@ -33,7 +33,8 @@
 -define(RF_TYPE, "rfztype").
 -define(RF_PROT, "exodm").
 -define(RF_GROUP, "rfzgroup").
--define(RF_DEVICE, "rfzone1").
+-define(RF_DEVICE1, "rfzone1").
+-define(RF_DEVICE2, "rfzone2").
 -define(RF_SERV_KEY, "1").
 -define(RF_DEV_KEY, "99").
 
