@@ -81,27 +81,37 @@ start(_StartType, _StartArgs) ->
 stop(_State) ->
     exit(stopped).
 
-start() ->
-    start_em([lager,rfzone]).
+%%--------------------------------------------------------------------
+%% @doc
+%% Starts all applications needed when running rfzone coonected to exodm.<br/>
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec start_exo() ->  ok | {error, Error::term()}.
 
 start_exo() ->
     Apps = [crypto, public_key, exo, bert, gproc, kvdb],
     start_em(Apps),
-    ?ei("Started support apps ~p", [Apps]),
+    ?debug("Started support apps ~p", [Apps]),
     application:load(exoport),
     SetUps = case application:get_env(exoport, '$setup_hooks') of
 	       undefined -> [];
 	       {ok, List} -> List
 	     end,
-    ?ei("exoport setup hooks ~p", [SetUps]),
+    ?debug("exoport setup hooks ~p", [SetUps]),
     [erlang:apply(M,F,A) || {_Phase, {M, F, A}} <- SetUps],
-    ?ei("exoport setup hooks executed.", []),
+    ?debug("exoport setup hooks executed.", []),
     start_em([exoport]),
-    ?ei("Started exoport", []),
+    ?debug("Started exoport", []),
     start_em([lager, canopen, rfzone]),
     ok.
 
+%% @private
+%% Shortcut start
+start() ->
+    start_em([lager,rfzone]).
 
+%% @private
 start_em([App|Apps]) ->
     %% io:format("Start: ~p\n", [App]),
     case application:start(App) of

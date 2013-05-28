@@ -213,7 +213,9 @@ configure_item({'remote-id', RidList}, {'remote-channel', Channel}, Config)
 	RemoteId ->
 	    gen_server:call(?SERVER, {configure_item, RemoteId, Channel, Config})
     end.
-	    
+
+%% @private
+%% Pick out remote id	    
 remote_id([], RemoteId) -> 
     RemoteId;
 remote_id([{'type-of-cobid', xcobid} | Rest], RemoteId) -> 
@@ -281,7 +283,8 @@ analog_output(RemoteId, Channel, Level)
 %%--------------------------------------------------------------------
 -spec digital_output(RemoteId::integer(),
 		    Channel::integer(),
-		    Action::on | off | integer()) -> ok | {error, Error::term()}.
+		    Action::on | off | integer()) -> 
+			    ok | {error, Error::term()}.
 
 digital_output(RemoteId, Channel, Action) 
   when is_integer(RemoteId) andalso
@@ -322,14 +325,16 @@ action(RemoteId, Action, Channel, Value)
        is_integer(Channel) andalso
        is_integer(Value) andalso
        (Action == analog orelse Action == encoder) ->
-    gen_server:cast(?SERVER, {action, RemoteId, encode(Action), Channel, Value}).
+    gen_server:cast(?SERVER, 
+		    {action, RemoteId, encode(Action), Channel, Value}).
 
 %%--------------------------------------------------------------------
 %% @doc
 %% Executes the equivalance of an extended notify message.
 %% @end
 %%--------------------------------------------------------------------
--spec power(RemoteId::integer(), Value:: on | off) -> ok | {error, Error::term()}.
+-spec power(RemoteId::integer(), Value:: on | off) -> 
+		   ok | {error, Error::term()}.
 
 power(RemoteId, Value)
   when is_integer(RemoteId) andalso
@@ -752,7 +757,7 @@ handle_info({tellstick_event,_Ref,EventData}, Ctx) ->
  
 handle_info({gpio_interrupt, 0, 25, _Value} = Event, Ctx) ->
     ?dbg("handle_info: gpio event for piface ~p\n.",[Event]),
-    NewCtx = piface_event(Ctx),
+    NewCtx = handle_piface_event(Ctx),
     {noreply, NewCtx};
 
 handle_info({gpio_interrupt, PinReg, Pin, Value} = Event, Ctx) ->
@@ -900,34 +905,37 @@ event_notify(ActualValue,_E=#event {value = Value,
     end.
     
 
-piface_event(Ctx=#ctx {piface_mask = OldMask}) ->
+handle_piface_event(Ctx=#ctx {piface_mask = OldMask}) ->
     case call_piface(read_input, []) of
 	OldMask ->
 	    %% No change, no action
-	    ?dbg("piface_event: read input ~p, no change.", [OldMask]),
+	    ?dbg("handle_piface_event: read input ~p, no change.", [OldMask]),
 	    Ctx;
 	NewMask ->
-	    ?dbg("piface_event: read input new ~p, old ~p.", 
+	    ?dbg("handle_piface_event: read input new ~p, old ~p.", 
 		 [NewMask, OldMask]),
 	    Changed = NewMask bxor OldMask,
-	    piface_event(Changed, 0, NewMask, Ctx#ctx {piface_mask = NewMask})
+	    %% Loop through mask and see which pins that have been changed
+	    piface_pin_event(Changed, 0, NewMask, 
+			     Ctx#ctx {piface_mask = NewMask})
     end.
 
-piface_event(0, _Pin, _NewMask, Ctx) ->
-    ?dbg("piface_event: all sent.", []),
+piface_pin_event(0, _Pin, _NewMask, Ctx) ->
+    ?dbg("piface_pin_event: all sent.", []),
     Ctx;
-piface_event(ChangeMask, Pin, NewMask, Ctx) ->
+piface_pin_event(ChangeMask, Pin, NewMask, Ctx) ->
     if (ChangeMask band 1) =:= 1 ->
 	    NewValue = (NewMask bsr Pin) band 1,
 	    EventData = [{protocol,gpio}, 
 			 {board, piface}, 
 			 {pin, Pin}],
-	    ?dbg("piface_event: event ~p, value ~p.", [EventData, NewValue]),
+	    ?dbg("piface_pin_event: event ~p, value ~p.", 
+		 [EventData, NewValue]),
 	    handle_event(EventData, NewValue, Ctx);
        true ->
 	    do_nothing
     end,
-    piface_event(ChangeMask bsr 1, Pin + 1, NewMask, Ctx).
+    piface_pin_event(ChangeMask bsr 1, Pin + 1, NewMask, Ctx).
 
 %%--------------------------------------------------------------------
 %% Digital output
@@ -940,7 +948,7 @@ digital_output(I, Nid, Is, Value) ->
 	    exec_digital_output(I, Nid, Is, Active);
        Digital, not SpringBack ->
 	    Active = Value =:= 1,
-	    if I#item.active =:= Active ->  %% no change, do noting
+	    if I#item.active =:= Active -> 
 		    ?dbg("digital_output: no change, no action.", []),
 		    [I | Is];
 	       true ->
@@ -990,7 +998,8 @@ analog_output(I=#item {rid = Rid, rchan = Rchan, timer = Timer, flags = Flags},
 	    ?dbg("analog_output: buffer call for ~.16#, ~p, ~p.",
 		 [Rid, Rchan, Value]),
 	    Tref = 
-		erlang:send_after(100, self(), {analog_output, Rid, Rchan, Value}),
+		erlang:send_after(100, self(), 
+				  {analog_output, Rid, Rchan, Value}),
 	    [I#item {timer = Tref} | Is];
        true ->
 	    ?dbg("analog_output: not analog item ~p, ~p, ignored.",
@@ -1198,7 +1207,6 @@ init_piface_if_needed([]) ->
 init_piface_if_needed([_I=#item {type = gpio, flags = Flags} | Items]) ->
     case proplists:get_value(board, Flags, cpu) of
 	piface ->
-	    call_piface(init, []),
 	    call_piface(init_interrupt, []), %% Maybe not always ??
 	    call_gpio(init, [?PIFACE_PIN]), 
 	    call_gpio(set_interrupt, [?PIFACE_PIN, falling]),
@@ -1431,13 +1439,10 @@ verify_item(_I=#item {type = exodm, unit = _Mod, lchan = _Fun, flags = _Args}) -
 verify_item(I=#item {type = gpio, flags = Flags}) ->
     case verify_general(I) of
 	ok ->
-	    case verify_app_started(gpio) of
-		ok ->
-		    case proplists:get_value(board, Flags) of
-			piface -> verify_app_started(spi);
-			_Other -> ok
-		    end;
-		E -> E
+	    case proplists:get_value(board, Flags) of
+		piface -> verify_apps_started([gpio, spi, piface]);
+		cpu -> verify_app_started(gpio);
+		_Unknown -> {error, unknown_board}
 	    end;
 	E -> E
     end;
@@ -1464,6 +1469,14 @@ verify_general(I=#item {type = Type, unit = Unit, lchan = Channel, flags = Flags
 	    N
     end.
 
+verify_apps_started([]) ->
+    ok;
+verify_apps_started([App | Apps]) ->
+    case verify_app_started(App) of
+	ok -> verify_apps_started(Apps);
+	E -> E
+    end.
+	    
 verify_app_started(App) ->
     case get(on_host) of
 	true -> 
@@ -1951,6 +1964,7 @@ unsubscribe(CoNode) ->
     lists:foreach(fun({{Index, _SubInd}, _Type, _Value}) ->
 			  co_api:extended_notify_unsubscribe(CoNode, Index)
 		  end, ?COMMANDS).
+
 rpc_args(_I=#item {}, _Active, [], Acc) ->
     lists:reverse(Acc);
 rpc_args(I=#item {}, Active, [{_Key, _Value} = Arg | Args], Acc) ->

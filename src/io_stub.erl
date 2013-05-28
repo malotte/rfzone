@@ -67,7 +67,7 @@ gpio_clr(Pin) ->
     ok.
 
 read_input() ->
-    255. %% ??
+    random(). %% ??
 
 %% gpio
 init(Pin) -> 
@@ -103,3 +103,9 @@ set_direction(PinReg, Pin, Dir) ->
     ?dbg("gpio set of pin direction ~p for pin ~p:~p.",
 	 [Dir, PinReg, Pin]),
     ok.
+
+random() ->
+    %% Initialize
+    random:seed(now()),
+    %% Retreive
+    random:uniform(16#ff).
