@@ -18,7 +18,7 @@
 %%% @author Malotte Westman Lönne <malotte@malotte.net>
 %%% @copyright (C) 2013, Tony Rogvall
 %%% @doc
-%%%     spi & gpio stub
+%%%     piface and gpio stub
 %%% Created:  May 2013 by Malotte W Lönne
 %%% @end
 %%%-------------------------------------------------------------------

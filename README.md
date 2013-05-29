@@ -20,7 +20,7 @@ rfZone currently has support for the following remote control protocols:
 <li>ikea</li>
 <li>risingsun</li>
 </ul>
-For information on what protocol a specif brand uses see [Protocol - Brand Map](https://github.com/malotte/rfzone/wiki/Protocol---Brand-Map).<br/>
+For information on what protocol a specific brand uses see [Protocol - Brand Map](https://github.com/malotte/rfzone/wiki/Protocol---Brand-Map).<br/>
 ### Dependencies
 
 To build rfZone you will need a working installation of Erlang R15B (or
@@ -41,14 +41,14 @@ rfZone also requires the following applications to be installed:
 To use the tellstick usb pin you need the correct driver installed.
 So far it has been an FTDI driver that can be found at www.ftdichip.com, to be sure it might be advisable to check on www.telldus.com.
 
-### Downloading
+### Download
 
 Clone the repository in a suitable location:
 
 ```sh
 $ git clone git://github.com/malotte/rfzone.git
 ```
-### Configurating
+### Configuration
 #### Concepts
 
 rfZone and SeaZone RC are communicating using CANOpen over UDP. This means they are addressed by CANOpen node ids. See www.canopensolutions.com for a description of CANOpen. 
@@ -71,7 +71,7 @@ The device for the tellstick usb pin is also specified in this file. <br/>
 Default file is ["rfzone/priv/rfzone.conf"](https://github.com/malotte/rfzone/raw/master/priv/rfzone.conf).<br/>
 Either update this file or create a new at any location and specify that in sys.config.
 
-### Building
+### Build
 
 Rebar will compile all needed dependencies.<br/>
 Compile:
@@ -83,7 +83,7 @@ $ rebar compile
 ==> rfzone (compile)
 ```
 
-### Running
+### Run
 
 There is a quick way to run the application for testing:
 
@@ -157,3 +157,4 @@ rfzone is documented using edoc. To generate the documentation do:
 $ cd rfzone
 $ rebar doc
 ```
+The result is a collection of html-documents under ```rfzone/doc```.

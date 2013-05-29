@@ -1,6 +1,7 @@
 %%
 %% Send fineoffset weather station data
 %%
+%% @private
 -module(fine_offset).
 
 -compile(export_all).

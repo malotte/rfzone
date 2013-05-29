@@ -1932,6 +1932,7 @@ set_trace(true, Trace) ->
 %%--------------------------------------------------------------------
 %% Utilities
 %%--------------------------------------------------------------------
+%% @private
 rid_translate({xcobid, Func, Nid}) ->
     ?XCOB_ID(co_lib:encode_func(Func), Nid);
 rid_translate({cobid, Func, Nid}) ->
