@@ -26,22 +26,13 @@ all: $(OBJS)
 
 debug: all
 
-depend:
-	edep -MM -o ../ebin $(ERLC_FLAGS) $(MODULES:%=%.erl) > depend.mk
-
-dialyze:
-	dialyzer --src -o dia.out -I ../include -c $(MODULES:%=%.erl) 
-
-edoc:
-	erl -noshell -pa doc -run edoc_run application "canopen" '".."' '[{private,false},no_packages,{sort_functions,false}]'
-
 clean:
 	rm -f $(OBJS) 
 
 test:
-	$(ERLDIR)/bin/ct_run -include ../include -suite tellstivk_SUITE
+	$(ERLDIR)/bin/ct_run -include ../include -suite tellstick_SUITE
 
 -include depend.mk
 
 ./%.beam:	%.erl
-	erlc -o ../ebin $(ERLC_FLAGS) $<
+	erlc  $(ERLC_FLAGS) $<
