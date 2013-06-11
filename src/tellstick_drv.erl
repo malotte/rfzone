@@ -772,7 +772,7 @@ event_notify(String, Ctx) ->
 	  end || D <- string:tokens(String, ";")],
     send_event(Ctx#ctx.subs, Event),
     %% send to event listener(s)
-    io:format("Event: ~p\n", [Event]),
+    %% io:format("Event: ~p\n", [Event]),
     Ctx.
 
 send_event([#subscription{pid=Pid,mon=Ref,pattern=Pattern}|Tail], Event) ->
