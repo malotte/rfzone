@@ -64,16 +64,17 @@ configure_rfzone_account(File, Url) ->
 					 Url),
       "ok"),
     
-    configure_device(?RF_DEVICE1),
-    configure_device(?RF_DEVICE2).
+    configure_device(?RF_DEVICE1, ?RF_DEVICE_NR1),
+    configure_device(?RF_DEVICE2, ?RF_DEVICE_NR2).
 
-configure_device(Device) ->
+configure_device(Device, Number) ->    
      exodm_json_api:parse_result(
       exodm_json_api:create_device(?RF_ACCOUNT, 
 				   Device,
 				   ?RF_TYPE, 
 				   ?RF_SERV_KEY, 
-				   ?RF_DEV_KEY),
+				   ?RF_DEV_KEY,
+				   Number),
        "ok"),
      exodm_json_api:parse_result(
       exodm_json_api:add_config_set_members(?RF_ACCOUNT, 

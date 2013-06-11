@@ -27,7 +27,7 @@
 
 -define(RF_ACCOUNT, "rfzone").
 -define(RF_ADMIN, "rfzone-admin").
--define(RF_PASS, "wewontechcrunch2011").
+-define(RF_PASS, "rfzonepassw").
 -define(RF_YANG, "rfzone.yang").
 -define(RF_SET, "rfzset").
 -define(RF_TYPE, "rfztype").
@@ -35,6 +35,8 @@
 -define(RF_GROUP, "rfzgroup").
 -define(RF_DEVICE1, "rfzone1").
 -define(RF_DEVICE2, "rfzone2").
+-define(RF_DEVICE_NR1, "+46768428999").
+-define(RF_DEVICE_NR2, "+46706652043").
 -define(RF_SERV_KEY, "1").
 -define(RF_DEV_KEY, "99").
 
