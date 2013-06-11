@@ -499,7 +499,10 @@ start_device(Args, Device) ->
 
 
 handle_call({reload, File}, _From, 
-	    Ctx=#ctx {node_id = Nid, device = OldDevice, items = OldItems}) ->
+	    Ctx=#ctx {node_id = Nid, 
+		      device = OldDevice, 
+		      items = OldItems,
+		      events = OldEvents    }) ->
     ConfFile = full_filename(File),
     ?dbg("reload ~p",[ConfFile]),
     case load_config(ConfFile) of
@@ -553,6 +556,8 @@ handle_call({reload, File}, _From,
 
 	    power_on(Nid, ItemsToAdd),
 	    power_off(Nid, ItemsToRemove),
+
+	    clear_events(OldEvents),  %% remove old subscription etc
 
 	    {PifaceInit,Events1} = 
 		init_events(Events, [], Ctx#ctx.piface_initialized),
@@ -770,6 +775,18 @@ handle_info({gpio_interrupt, PinReg, Pin, Value} = Event, Ctx) ->
 		 {pin, Pin}],
     handle_event(EventData, Value, Ctx),
     {noreply,Ctx};
+
+handle_info({gsms, Ref, _Pdu}, Ctx) ->
+    case lists:keyfind(Ref, #event.ref, Ctx#ctx.events) of
+	false ->
+	    ?debug("gsms ref not found, pdu=~p\n", [_Pdu]),
+	    {nreply, Ctx};
+	E ->
+	    %% Send the event as a CAN notification
+	    %% It will then be handled by handle_cast above
+	    event_notify(dummy, E), %% data must be in event def
+	    {noreply, Ctx}
+    end;
 
 handle_info({timeout,Ref,inhibit}, Ctx) ->
     ?dbg("handle_info: inhibit timer done.", []),
@@ -1108,6 +1125,18 @@ run(_I=#item {type = email, flags = Flags}, true, _Style) ->
 	    ok;
 	Error -> Error
     end;
+run(_I=#item {type = sms}, false, _Style) ->
+    ?dbg("run sms: state false, not sending.",[]),
+    ok;  %% do not send
+run(_I=#item {type = sms, flags = Flags}, true, _Style) ->
+    Body = proplists:get_value(body, Flags, ""),
+    {Fs,_} = proplists:split(Flags, [smsc,rp,udhi,udh,srr,mref,
+				     vpf,vp,addr,pid,dcs,type,class,
+				     alphabet,compression,store,wait_type,
+				     notify,ref]),
+    Opts = lists:append(Fs),
+    gsms:send(Opts, Body);
+
 run(I=#item {type = exodm, unit = Mod, lchan = Fun, flags = Flags}, 
     Active, _Style) ->
     ExodmArgs = rpc_args(I, Active, proplists:get_value(args, Flags, []), []),
@@ -1275,6 +1304,7 @@ init_events([E=#event {pattern = Pattern} | Rest],Acc,Pi) ->
 		piface ->
 		    ?dbg("piface set interrupt ~p\n", [{PinReg, Pin, Edge}]),
 		    if Edge =/= none, Pi =:= false ->
+			    ?dbg("piface init_interrupt", []),
 			    call_piface(init_interrupt, []),
 			    call_gpio(init, [?PIFACE_PIN]), 
 			    call_gpio(set_interrupt, [?PIFACE_PIN, falling]),
@@ -1286,11 +1316,30 @@ init_events([E=#event {pattern = Pattern} | Rest],Acc,Pi) ->
 		    init_events(Rest, [E|Acc], Pi)
 	    end;
 	sms ->
-	    %% add pattern as sms subscription
-	    init_events(Rest, [E|Acc], Pi);
+	    Filter = sms_filter(Pattern),
+	    ?debug("sms filter = ~p\n", [Filter]),
+	    case gsms:subscribe(Filter) of
+		{ok,Ref} ->
+		    init_events(Rest, [E#event{ref=Ref}|Acc], Pi);
+		_Error ->
+		    ?error("unable to subscribe to sms ~p", [_Error]),
+		    init_events(Rest, [E|Acc], Pi)
+	    end;
 	_Other -> 
 	    init_events(Rest, [E|Acc], Pi)
     end.
+
+clear_events([E=#event {pattern = Pattern} | Rest]) ->
+    case proplists:get_value(protocol, Pattern) of
+	sms ->
+	    gsms:unsubscribe(E#event.ref),
+	    clear_events(Rest);
+	_ ->
+	    clear_events(Rest)
+    end;
+clear_events([]) ->
+    ok.
+
 
 %%--------------------------------------------------------------------
 %% Load configuration file
@@ -1439,8 +1488,19 @@ flags(_Other, _Flags) ->
 %%--------------------------------------------------------------------
 verify_item(_I=#item {type = email, unit = _Unit, lchan = _Lchan,
 		      flags = Opts}) ->
-    %% unit & lchan may be anything right now
-    verify_mail_options(Opts);
+    case verify_app_started(gen_smtp) of
+	ok ->
+	    verify_mail_options(Opts);
+	Error -> Error
+    end;
+
+verify_item(_I=#item {type = sms, unit = _Unit, lchan = _Lchan,
+		      flags = Opts}) ->
+    case verify_app_started(gsms) of
+	ok ->
+	    verify_sms_options(Opts);
+	Error -> Error
+    end;
 
 verify_item(_I=#item {type = exodm, unit = Mod, lchan = Fun, flags = Flags}) 
   when is_atom(Mod), is_atom(Fun), is_list(Flags) ->
@@ -1552,6 +1612,43 @@ verify_event(_I=#event {pattern = Pattern,
 verify_rpc_args(_Args) ->
     %% ??
     ok.
+
+verify_sms_options([{K,V}|Opts]) ->
+    case verify_sms_option(K,V) of
+	false -> {error, {K, bad_value}};
+	true -> verify_sms_options(Opts);
+	unknown -> {error,{unknown_option, K}}
+    end;
+verify_sms_options([K|Opts]) ->
+    case verify_sms_option(K) of
+	true -> verify_sms_options(Opts);
+	unknown -> {error,{unknown_option, K}}
+    end;
+verify_sms_options([]) ->
+    ok.
+
+verify_sms_option(inhibit,Value) ->
+    is_inhibit_value(Value);
+verify_sms_option(digital,Value) ->
+    is_boolean(Value);
+verify_sms_option(springback,Value) ->
+    is_boolean(Value);
+verify_sms_option(body,Value) ->
+    is_list(Value);
+verify_sms_option(K,_V) ->
+    case lists:member(K, [smsc,rp,udhi,udh,srr,mref,
+			  vpf,vp,addr,pid,dcs,type,class,
+			  alphabet,compression,store,wait_type,
+			  notify,ref]) of
+	true -> true;
+	false -> unknown
+    end.
+	     
+
+
+verify_sms_option(digital) -> true;
+verify_sms_option(springback) -> true;
+verify_sms_option(_) -> unknown.
 
 
 verify_mail_option(inhibit,Value) ->   
@@ -1724,6 +1821,12 @@ verify_event([], _) ->
     true;
 verify_event(_, []) ->
     false.
+
+%% take subset of proplist
+sms_filter(Pattern) ->
+    {Fs,_Pattern1} = proplists:split(Pattern, [type,class,alphabet,pid,src,dst,
+					       anumber,bnumber,smsc,reg_exp]),
+    lists:append(Fs).
 
 verify_sms_event(Event) ->
     %% fixme add filter and or not
