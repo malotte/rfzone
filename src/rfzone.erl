@@ -41,6 +41,7 @@
 %% Rfzone with exoport API
 -export([start_exo/0]).
 
+-export([start_demo/0]).
 
 %%%===================================================================
 %%% API
@@ -105,6 +106,17 @@ start_exo() ->
     ?debug("Started exoport", []),
     start_em([lager, canopen, rfzone]),
     ok.
+
+start_demo() ->
+    Apps1 = [gpio, spi, uart, piface],
+    start_em(Apps1),
+    ?debug("Started support apps ~p", [Apps1]),
+    Apps2 = [gen_smtp, gsms],
+    start_em(Apps2),
+    ?debug("Started support apps ~p", [Apps2]),
+    start_em([lager, canopen, rfzone]),
+    ok.    
+    
 
 %% @private
 %% Shortcut start

@@ -111,11 +111,12 @@
 -record(event,
 	{
 	  pattern,  
+	  ref,    %% reference to extern event subscription when used
 	  rid,    %% EFID|SFID
 	  rchan,  %% 1..254
 	  type,   %% digital,analog,encoder
 	  value,  %% depend on type
-	  direction = undefined, %% Interrupt direction
+	  edge = undefined, %% Interrupt direction
 	  polarity = false %% Switch polarity of value
 	}).
 
@@ -431,15 +432,15 @@ conf(Args,CoNode) ->
 		true -> reset_items(Items);
 		false -> do_nothing
 	    end,
-	    PifaceInit = init_piface_if_needed(Items),
+	    %% PifaceInit = init_piface_if_needed(Items),
 	    power_on(Nid, Items),
-	    init_events(Events),
+	    {PifaceInit,Events1} = init_events(Events, [], false),
 	    process_flag(trap_exit, true),
 	    {ok, #ctx { co_node = CoNode, 
 			device = Device,
 			node_id = Nid, 
 			items=Items,
-			events=Events,
+			events=Events1,
 			piface_initialized = PifaceInit,
 			trace=Trace
 		      }};
@@ -498,7 +499,10 @@ start_device(Args, Device) ->
 
 
 handle_call({reload, File}, _From, 
-	    Ctx=#ctx {node_id = Nid, device = OldDevice, items = OldItems}) ->
+	    Ctx=#ctx {node_id = Nid, 
+		      device = OldDevice, 
+		      items = OldItems,
+		      events = OldEvents    }) ->
     ConfFile = full_filename(File),
     ?dbg("reload ~p",[ConfFile]),
     case load_config(ConfFile) of
@@ -544,18 +548,21 @@ handle_call({reload, File}, _From,
 			  end
 		  end, [], OldItems),
 
-	    PifaceInit = 
-		case Ctx#ctx.piface_initialized of
-		    false -> init_piface_if_needed(NewItems);
-		    true -> true
-		end,
+	    %% PifaceInit = 
+	    %% case Ctx#ctx.piface_initialized of
+	    %% false -> init_piface_if_needed(NewItems);
+	    %% true -> true
+	    %% end,
 
 	    power_on(Nid, ItemsToAdd),
 	    power_off(Nid, ItemsToRemove),
 
-	    init_events(Events),
+	    clear_events(OldEvents),  %% remove old subscription etc
+
+	    {PifaceInit,Events1} = 
+		init_events(Events, [], Ctx#ctx.piface_initialized),
 	    {reply, ok, Ctx#ctx {items = NewItems, 
-				 events=Events,
+				 events=Events1,
 				 device = NewDevice,
 				 piface_initialized = PifaceInit}};
 	Error ->
@@ -755,7 +762,7 @@ handle_info({tellstick_event,_Ref,EventData}, Ctx) ->
     handle_event(EventData, dummy, Ctx),
     {noreply,Ctx};
  
-handle_info({gpio_interrupt, 0, 25, _Value} = Event, Ctx) ->
+handle_info({gpio_interrupt, 0, ?PIFACE_PIN, _Value} = Event, Ctx) ->
     ?dbg("handle_info: gpio event for piface ~p\n.",[Event]),
     NewCtx = handle_piface_event(Ctx),
     {noreply, NewCtx};
@@ -768,6 +775,18 @@ handle_info({gpio_interrupt, PinReg, Pin, Value} = Event, Ctx) ->
 		 {pin, Pin}],
     handle_event(EventData, Value, Ctx),
     {noreply,Ctx};
+
+handle_info({gsms, Ref, _Pdu}, Ctx) ->
+    case lists:keyfind(Ref, #event.ref, Ctx#ctx.events) of
+	false ->
+	    ?debug("gsms ref not found, pdu=~p\n", [_Pdu]),
+	    {nreply, Ctx};
+	E ->
+	    %% Send the event as a CAN notification
+	    %% It will then be handled by handle_cast above
+	    event_notify(dummy, E), %% data must be in event def
+	    {noreply, Ctx}
+    end;
 
 handle_info({timeout,Ref,inhibit}, Ctx) ->
     ?dbg("handle_info: inhibit timer done.", []),
@@ -885,7 +904,7 @@ event_notify(ActualValue,_E=#event {value = Value,
 				    rid = Rid, 
 				    rchan = Rchan, 
 				    polarity = Polarity, 
-				    direction = Direction}) ->
+				    edge = Edge}) ->
     %% Value can be hardcoded in event definition or given by argument
     V = if Value =:= value -> ActualValue;
 	   true -> Value
@@ -897,7 +916,7 @@ event_notify(ActualValue,_E=#event {value = Value,
     
     Data = <<V1:32/little>>,
     %% If an interrupt event verify direction against actual value
-    case {Direction, ActualValue} of
+    case {Edge, ActualValue} of
 	{rising,  0} -> do_nothing;
 	{falling, 1} -> do_nothing;
 	{none, _} -> do_nothing;
@@ -1106,6 +1125,18 @@ run(_I=#item {type = email, flags = Flags}, true, _Style) ->
 	    ok;
 	Error -> Error
     end;
+run(_I=#item {type = sms}, false, _Style) ->
+    ?dbg("run sms: state false, not sending.",[]),
+    ok;  %% do not send
+run(_I=#item {type = sms, flags = Flags}, true, _Style) ->
+    Body = proplists:get_value(body, Flags, ""),
+    {Fs,_} = proplists:split(Flags, [smsc,rp,udhi,udh,srr,mref,
+				     vpf,vp,addr,pid,dcs,type,class,
+				     alphabet,compression,store,wait_type,
+				     notify,ref]),
+    Opts = lists:append(Fs),
+    gsms:send(Opts, Body);
+
 run(I=#item {type = exodm, unit = Mod, lchan = Fun, flags = Flags}, 
     Active, _Style) ->
     ExodmArgs = rpc_args(I, Active, proplists:get_value(args, Flags, []), []),
@@ -1202,20 +1233,20 @@ init_if_gpio(?MSG_OUTPUT_ADD,
 init_if_gpio(_Cmd, _I) -> %% Release case ??
     ok.
 
-init_piface_if_needed([]) ->
-    false;
-init_piface_if_needed([_I=#item {type = gpio, flags = Flags} | Items]) ->
-    case proplists:get_value(board, Flags, cpu) of
-	piface ->
-	    call_piface(init_interrupt, []), %% Maybe not always ??
-	    call_gpio(init, [?PIFACE_PIN]), 
-	    call_gpio(set_interrupt, [?PIFACE_PIN, falling]),
-	    true;
-	_Board ->
-	    init_piface_if_needed(Items)
-    end;
-init_piface_if_needed([_I=#item {} | Items]) ->
-    init_piface_if_needed(Items).
+%% init_piface_if_needed([]) ->
+%%     false;
+%% init_piface_if_needed([_I=#item {type = gpio, flags = Flags} | Items]) ->
+%%     case proplists:get_value(board, Flags, cpu) of
+%% 	piface ->
+%% 	    call_piface(init_interrupt, []), %% Maybe not always ??
+%% 	    call_gpio(init, [?PIFACE_PIN]), 
+%% 	    call_gpio(set_interrupt, [?PIFACE_PIN, falling]),
+%% 	    true;
+%% 	_Board ->
+%% 	    init_piface_if_needed(Items)
+%%     end;
+%% init_piface_if_needed([_I=#item {} | Items]) ->
+%%     init_piface_if_needed(Items).
    
 reset_items(Items) ->
     lists:foreach(
@@ -1257,24 +1288,57 @@ remote_power_on(Rid, Nid, [_ | Is]) ->
 remote_power_on(_Rid, _Nid, []) ->
     ok.
 
-init_events([]) ->
-    ok;
-init_events([_E=#event {pattern = Pattern} | Rest]) ->
+init_events([],Acc,Pi) ->
+    {Pi,lists:reverse(Acc)};
+init_events([E=#event {pattern = Pattern} | Rest],Acc,Pi) ->
     case proplists:get_value(protocol, Pattern) of
-	gpio -> 
+	gpio ->
 	    PinReg = proplists:get_value(pin_reg, Pattern, 0),
 	    Pin = proplists:get_value(pin, Pattern),
-	    Direction = proplists:get_value(interrupt, Pattern, none),
+	    Edge = proplists:get_value(interrupt, Pattern, none),
 	    case proplists:get_value(board, Pattern, cpu) of
 		cpu -> 
-		    call_gpio(set_interrupt, [PinReg, Pin, Direction]);
+		    ?dbg("cpu set interrupt ~p\n", [{PinReg, Pin, Edge}]),
+		    call_gpio(set_interrupt, [PinReg, Pin, Edge]),
+		    init_events(Rest, [E|Acc], Pi);
 		piface ->
-		    ok %% ??
+		    ?dbg("piface set interrupt ~p\n", [{PinReg, Pin, Edge}]),
+		    if Edge =/= none, Pi =:= false ->
+			    ?dbg("piface init_interrupt", []),
+			    call_piface(init_interrupt, []),
+			    call_gpio(init, [?PIFACE_PIN]), 
+			    call_gpio(set_interrupt, [?PIFACE_PIN, falling]),
+			    init_events(Rest, [E|Acc], true);
+		       true ->
+			    init_events(Rest, [E|Acc], Pi)
+		    end;
+		_ ->
+		    init_events(Rest, [E|Acc], Pi)
+	    end;
+	sms ->
+	    Filter = sms_filter(Pattern),
+	    ?debug("sms filter = ~p\n", [Filter]),
+	    case gsms:subscribe(Filter) of
+		{ok,Ref} ->
+		    init_events(Rest, [E#event{ref=Ref}|Acc], Pi);
+		_Error ->
+		    ?error("unable to subscribe to sms ~p", [_Error]),
+		    init_events(Rest, [E|Acc], Pi)
 	    end;
 	_Other -> 
-	    ok
-    end,
-    init_events(Rest).
+	    init_events(Rest, [E|Acc], Pi)
+    end.
+
+clear_events([E=#event {pattern = Pattern} | Rest]) ->
+    case proplists:get_value(protocol, Pattern) of
+	sms ->
+	    gsms:unsubscribe(E#event.ref),
+	    clear_events(Rest);
+	_ ->
+	    clear_events(Rest)
+    end;
+clear_events([]) ->
+    ok.
 
 
 %%--------------------------------------------------------------------
@@ -1307,13 +1371,13 @@ load_conf([C | Cs], Conf, Is, Ts) ->
 	{event, Pattern, {Rid,RChan,Type,Value}} ->
 	    RCobId = rid_translate(Rid),
 	    Polarity = proplists:get_value(polarity, Pattern, false),
-	    Direction = proplists:get_value(interrupt, Pattern, undefined),
+	    Edge = proplists:get_value(interrupt, Pattern, undefined),
 	    Item = #event { pattern = Pattern,
 			    rid   = RCobId,
 			    rchan = RChan,
 			    type  = Type,
 			    value = Value,
-			    direction = Direction,
+			    edge = Edge,
 			    polarity = Polarity},
 	    case verify_event(Item) of
 		ok ->
@@ -1424,8 +1488,19 @@ flags(_Other, _Flags) ->
 %%--------------------------------------------------------------------
 verify_item(_I=#item {type = email, unit = _Unit, lchan = _Lchan,
 		      flags = Opts}) ->
-    %% unit & lchan may be anything right now
-    verify_mail_options(Opts);
+    case verify_app_started(gen_smtp) of
+	ok ->
+	    verify_mail_options(Opts);
+	Error -> Error
+    end;
+
+verify_item(_I=#item {type = sms, unit = _Unit, lchan = _Lchan,
+		      flags = Opts}) ->
+    case verify_app_started(gsms) of
+	ok ->
+	    verify_sms_options(Opts);
+	Error -> Error
+    end;
 
 verify_item(_I=#item {type = exodm, unit = Mod, lchan = Fun, flags = Flags}) 
   when is_atom(Mod), is_atom(Fun), is_list(Flags) ->
@@ -1520,12 +1595,15 @@ verify_event(_I=#event {pattern = Pattern,
 		end
        end, {error, bad_value_range},
 
-       fun() -> case lists:member({protocol, gpio}, Pattern) of
-		    true ->
-			verify_gpio_event(Pattern);
-		    false ->
-			verify_event(Pattern, [protocol,model,data]) 
-		end
+       fun() ->
+	       case proplists:get_value(protocol, Pattern) of
+		   gpio ->
+		       verify_gpio_event(Pattern);
+		   sms ->
+		       verify_sms_event(Pattern);
+		   _ ->
+		       verify_event(Pattern, [protocol,model,data])
+	       end
        end,
        {error, bad_event}
 
@@ -1534,6 +1612,43 @@ verify_event(_I=#event {pattern = Pattern,
 verify_rpc_args(_Args) ->
     %% ??
     ok.
+
+verify_sms_options([{K,V}|Opts]) ->
+    case verify_sms_option(K,V) of
+	false -> {error, {K, bad_value}};
+	true -> verify_sms_options(Opts);
+	unknown -> {error,{unknown_option, K}}
+    end;
+verify_sms_options([K|Opts]) ->
+    case verify_sms_option(K) of
+	true -> verify_sms_options(Opts);
+	unknown -> {error,{unknown_option, K}}
+    end;
+verify_sms_options([]) ->
+    ok.
+
+verify_sms_option(inhibit,Value) ->
+    is_inhibit_value(Value);
+verify_sms_option(digital,Value) ->
+    is_boolean(Value);
+verify_sms_option(springback,Value) ->
+    is_boolean(Value);
+verify_sms_option(body,Value) ->
+    is_list(Value);
+verify_sms_option(K,_V) ->
+    case lists:member(K, [smsc,rp,udhi,udh,srr,mref,
+			  vpf,vp,addr,pid,dcs,type,class,
+			  alphabet,compression,store,wait_type,
+			  notify,ref]) of
+	true -> true;
+	false -> unknown
+    end.
+	     
+
+
+verify_sms_option(digital) -> true;
+verify_sms_option(springback) -> true;
+verify_sms_option(_) -> unknown.
 
 
 verify_mail_option(inhibit,Value) ->   
@@ -1707,6 +1822,19 @@ verify_event([], _) ->
 verify_event(_, []) ->
     false.
 
+%% take subset of proplist
+sms_filter(Pattern) ->
+    {Fs,_Pattern1} = proplists:split(Pattern, [type,class,alphabet,pid,src,dst,
+					       anumber,bnumber,smsc,reg_exp]),
+    lists:append(Fs).
+
+verify_sms_event(Event) ->
+    %% fixme add filter and or not
+    verify_event(Event, [protocol,data,polarity,
+			 type,class,alphabet,pid,src,dst,
+			 anumber,bnumber,smsc,reg_exp]).
+
+
 verify_gpio_event(Event) ->
     %% Pin is mandatory
     case lists:keymember(pin, 1, Event) of
@@ -1775,7 +1903,7 @@ verify_channel_range(risingsun, Channel)
        Channel =< 4 ->
     ok;
 verify_channel_range(gpio, Pin)
-  when Pin >= 1,
+  when Pin >= 0,
        Pin =< 255 -> 
     ok;
 verify_channel_range(_Type, _Channel) ->
@@ -1832,11 +1960,11 @@ verify_flags(gpio, [{board, piface} | _Flags], _I)  ->
     {error, invalid_board_pin_combination};
 verify_flags(gpio, [{board, _Board} | _Flags], _I) ->
     {error, not_supported_board};
-verify_flags(gpio = Type, [{interrupt, Direction} | Flags], I) 
-  when Direction == none;
-       Direction == falling;
-       Direction == rising;
-       Direction == both ->
+verify_flags(gpio = Type, [{interrupt, Edge} | Flags], I) 
+  when Edge == none;
+       Edge == falling;
+       Edge == rising;
+       Edge == both ->
     verify_flags(Type, Flags, I);
 verify_flags(Type, [{inhibit,Time} | Flags], I)
   when is_integer(Time), Time >= 0 ->

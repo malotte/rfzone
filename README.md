@@ -117,7 +117,6 @@ You probably also have to update "rfzone/rel/reltool.config" with the correct pa
        {app, stdlib, [{incl_cond, include}]},
        {app, kernel, [{incl_cond, include}]},
        {app, uart, [{incl_cond, include}]},
-       {app, eapi, [{incl_cond, include}]},
        {app, can, [{incl_cond, include}]},
        {app, canopen, [{incl_cond, include}]},
        {app, rfzone, [{incl_cond, include}]}
