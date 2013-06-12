@@ -131,6 +131,7 @@
 	  device = {simulated, ?DEF_VERSION}::tuple(),  
 	  items = []::list(),   %% controlled items
 	  events = []::list(),  %% controlled events
+	  file = ""::string(),  %% full name of conf file loaded	  
 	  piface_initialized = false::boolean(), %% flag needed for gpio/piface
 	  piface_mask = 16#ff::integer(), %% Values for piface pins
 	  trace
@@ -441,6 +442,7 @@ conf(Args,CoNode) ->
 			node_id = Nid, 
 			items=Items,
 			events=Events1,
+			file=ConfFile,
 			piface_initialized = PifaceInit,
 			trace=Trace
 		      }};
@@ -564,6 +566,7 @@ handle_call({reload, File}, _From,
 	    {reply, ok, Ctx#ctx {items = NewItems, 
 				 events=Events1,
 				 device = NewDevice,
+				 file=ConfFile,
 				 piface_initialized = PifaceInit}};
 	Error ->
 	    {reply, Error, Ctx}
@@ -623,12 +626,17 @@ handle_call({new_co_node, NewCoNode}, _From, Ctx=#ctx {co_node = OldCoNode}) ->
     {reply, ok, Ctx#ctx {co_node = NewCoNode, node_id = Nid }};
 
 handle_call(dump, _From, 
-	    Ctx=#ctx {co_node = CoNode, device = Device, 
-		      node_id = {Type,Nid}, 
+	    Ctx=#ctx {device = Device, 
+		      co_node = CoNode, 
+		      node_id = {Type,Nid},
+		      file = File,
 		      events = Events,
 		      items = Items}) ->
-    io:format("Ctx: CoNode = ~p, Device = ~p,", [CoNode, Device]),
+    io:format("Ctx:\n,", []),
+    io:format("Device = ~p\n,", [Device]),
+    io:format("CoNode = ~p\n,", [CoNode]),
     io:format("NodeId = {~p, ~.16#},\n", [Type, Nid]),
+    io:format("Configuration file = ~p\n,", [File]),
     io:format("Items=\n", []),
     lists:foreach(fun(Item) -> print_item(Item) end, Items),
     io:format("Events=\n", []),
@@ -1303,7 +1311,8 @@ init_events([E=#event {pattern = Pattern} | Rest],Acc,Pi) ->
 		    init_events(Rest, [E|Acc], Pi);
 		piface ->
 		    ?dbg("piface set interrupt ~p\n", [{PinReg, Pin, Edge}]),
-		    if Edge =/= none, Pi =:= false ->
+		    if Edge =/= none, 
+		       Pi =:= false ->
 			    ?dbg("piface init_interrupt", []),
 			    call_piface(init_interrupt, []),
 			    call_gpio(init, [?PIFACE_PIN]), 
