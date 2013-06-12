@@ -42,6 +42,7 @@
 -export([start_exo/0]).
 
 -export([start_demo/0]).
+-export([start_exo_demo/0]).
 
 %%%===================================================================
 %%% API
@@ -91,6 +92,22 @@ stop(_State) ->
 -spec start_exo() ->  ok | {error, Error::term()}.
 
 start_exo() ->
+    start_exo_support(),
+    start_em([rfzone]),
+    ok.
+
+start_demo() ->
+    start_demo_support(),
+    start_em([lager, canopen, rfzone]),
+    ok.    
+    
+start_exo_demo() ->
+    start_exo_support(),
+    start_demo_support(),
+    start_em([lager, canopen, rfzone]),
+    ok.    
+
+start_exo_support() ->
     Apps = [crypto, public_key, exo, bert, gproc, kvdb],
     start_em(Apps),
     ?debug("Started support apps ~p", [Apps]),
@@ -104,19 +121,16 @@ start_exo() ->
     ?debug("exoport setup hooks executed.", []),
     start_em([exoport]),
     ?debug("Started exoport", []),
-    start_em([lager, canopen, rfzone]),
     ok.
 
-start_demo() ->
+start_demo_support() ->
     Apps1 = [gpio, spi, uart, piface],
     start_em(Apps1),
     ?debug("Started support apps ~p", [Apps1]),
     Apps2 = [gen_smtp, gsms],
     start_em(Apps2),
     ?debug("Started support apps ~p", [Apps2]),
-    start_em([lager, canopen, rfzone]),
     ok.    
-    
 
 %% @private
 %% Shortcut start
