@@ -303,6 +303,16 @@ digital_output(RemoteId, Channel, Action)
   when is_integer(RemoteId) andalso
        is_integer(Channel) andalso
        (Action =:= 0 orelse Action =:= 1) -> 
+    gen_server:cast(?SERVER, {digital_output, RemoteId, Channel, Action});
+digital_output(RemoteId, Channel, BinAction) 
+  when is_integer(RemoteId) andalso
+       is_integer(Channel) andalso
+       is_binary(BinAction) -> 
+    %% Fix for enum from exodm !!!!!
+    Action = case BinAction of
+		 <<"on">> -> 1;
+		 <<"off">> -> 0
+	     end,
     gen_server:cast(?SERVER, {digital_output, RemoteId, Channel, Action}).
 
 %%--------------------------------------------------------------------

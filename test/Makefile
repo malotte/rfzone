@@ -8,6 +8,10 @@ MODULES = \
 	rfzone_SUITE \
 	rfzone_http_server \
 	rfzone_customer_server \
+	rfzdemo \
+	rfzdemo_index \
+	rfzdemo_inets \
+	rfzdemo_deps \
 	rfzone_exo_SUITE
 
 

@@ -35,7 +35,9 @@
 	 receive_notification/2,
 	 start_receive_all/0,
 	 stop_receive_all/0,
-	 digital_output/3]).
+	 digital_output/3,
+	 subscribe/0,
+	 unsubscribe/0]).
 
 %% gen_server callbacks
 -export([init/1, 
@@ -54,7 +56,8 @@
 	{
 	  state = single,
 	  http::pid(),
-	  client::pid()
+	  client::pid(),
+	  subs = []::list()     %% subscriber list %% Monitoring needed ??
 	}).
 
 start(Args) ->
@@ -82,6 +85,20 @@ stop_receive_all()  ->
 
 digital_output(Device, Channel, Action) ->
     gen_server:call(?SERVER, {digital_output, Device, Channel, Action}).
+
+%% @doc
+%%   Subscribe to changes http requests from exodm.
+%% @end
+-spec subscribe() -> ok | {error,term()}.
+subscribe() ->
+    gen_server:call(?SERVER, {subscribe, self()}).
+
+%% @doc
+%%   Unsubscribe to changes of http requests from exodm.
+%% @end
+-spec unsubscribe() -> ok | {error,term()}.
+unsubscribe() ->
+    gen_server:call(?SERVER, {unsubscribe, self()}).
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
@@ -125,14 +142,28 @@ handle_call({notification, Request, TimeOut} = Notif, _From, Ctx) ->
 
 handle_call({digital_output, Device, Channel, Action} = Req, _From, Ctx) ->
     ?dbg("handle_call: ~p", [Req]),
+    TransId = integer_to_list(random()),
     Result = exodm_json_api:json_request("rfzone:digital-output",
 					 [{"device-id", Device},
-					  {"item-id", 16#20001},
+					  {"item-id", 16#26020001},
 					  {"channel", Channel},
 					  {"action", Action}],
-					 integer_to_list(random()),
+					 TransId,
 					 user),
-    {reply, Result, Ctx};
+    Reply = 
+	try verify_result(Result, TransId, "accepted") of
+	    ok -> ok
+	catch
+	    error: _E -> 
+		?dbg("result verification failed, reason ~p", [_E]),
+		{error, Result}
+	end,
+    {reply, Reply, Ctx};
+
+handle_call({subscribe, Pid}, _From, Ctx=#ctx {subs = Subs}) ->
+    {reply, ok, Ctx#ctx {subs = lists:usort([Pid | Subs])}};
+handle_call({unsubscribe, Pid}, _From, Ctx=#ctx {subs = Subs}) ->
+    {reply, ok, Ctx#ctx {subs = Subs -- [Pid]}};
 
 handle_call(stop, _From, Ctx) ->
     ?dbg("handle_call: stop:",[]),
@@ -170,6 +201,7 @@ handle_info({http_request, Body, Sender} = HR, Ctx=#ctx {state = multi}) ->
     ?dbg("handle_info: expected http_request ~p.",[HR]),
     Result = verify_notification(any, Body, Sender),
     ?dbg("handle_info: verification result ~p.",[Result]),    
+    inform_subscribers({feedback, Result}, Ctx),
     {noreply, Ctx};
   
 handle_info({http_request, _Body, _Sender} = HR, Ctx) ->
@@ -202,7 +234,20 @@ terminate(_Reason, _Ctx=#ctx {http = Http}) ->
 code_change(_OldVsn, Ctx, _Extra) ->
     {ok, Ctx}.
 
+inform_subscribers(Msg, _Ctx=#ctx {subs = Subs}) ->
+    lists:foreach(
+      fun(Pid) when is_pid(Pid) -> Pid ! Msg;
+	 (_) -> ok
+      end, 
+      Subs).
 
+verify_result(ResultStruct, TransId, Status) ->
+    {"result", {struct, Result}} = ResultStruct,
+    %% Transaction id seems to be changed, hmmm ...
+    %% {"transaction-id",TransId} = lists:keyfind("transaction-id",1,Result),
+    {"rpc-status",Status} = lists:keyfind("rpc-status",1,Result),
+    {"final",false} = lists:keyfind("final",1,Result),
+    ok.
 
 random() ->
     %% Initialize
