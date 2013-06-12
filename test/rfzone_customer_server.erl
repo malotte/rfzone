@@ -143,11 +143,11 @@ handle_call({notification, Request, TimeOut} = Notif, _From, Ctx) ->
 handle_call({digital_output, Device, Channel, Action} = Req, _From, Ctx) ->
     ?dbg("handle_call: ~p", [Req]),
     TransId = integer_to_list(random()),
-    Result = exodm_json_api:json_request("rfzone:digital-output",
+    Result = exodm_json_api:json_request("rfzone:do",
 					 [{"device-id", Device},
-					  {"item-id", 16#26020001},
-					  {"channel", Channel},
-					  {"action", Action}],
+					  {"id", 16#26020001},
+					  {"ch", Channel},
+					  {"act", Action}],
 					 TransId,
 					 user),
     Reply = 

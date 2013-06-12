@@ -53,6 +53,30 @@ module rfzone
       }
     }
 
+    rpc do {
+      description "Turn On/Off.";
+      input {
+        uses exo:std-request;
+
+	leaf id {
+	  type uint32;
+	}
+	leaf ch {
+	  type uint32;
+	}
+	leaf act {
+          type on-off;
+	}
+      }
+      // Output only contains status.
+      output {
+        description
+          "Output sent in response to a digital output request";
+        
+        uses exo:std-callback;
+      }
+    }
+
     rpc gpio-interrupt {
         description "Handle gpio interrupt.";
 	input {

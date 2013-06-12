@@ -35,8 +35,8 @@
 -define(RF_GROUP, "rfzgroup").
 -define(RF_DEVICE1, "rfzone1").
 -define(RF_DEVICE2, "rfzone2").
--define(RF_DEVICE_NR1, "+46768428999").
--define(RF_DEVICE_NR2, "+46706652043").
+-define(RF_DEVICE_NR1, "46768428999").
+-define(RF_DEVICE_NR2, "46706652043").
 -define(RF_SERV_KEY, "1").
 -define(RF_DEV_KEY, "99").
 

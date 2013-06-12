@@ -136,7 +136,7 @@ event({Colour, Action} = Event) ->
 	colour2channel(Colour), 
 	Action),   
    ?dbg("result ~p",[Result]),
-    wf:update(flash_status, Result),
+    wf:update(flash_status, atom_to_list(Result)),
     wf:flush(),
     ok;
 event(Event) ->
