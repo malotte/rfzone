@@ -108,20 +108,21 @@ start_exo_demo() ->
     ok.    
 
 start_exo_support() ->
-    Apps = [crypto, public_key, exo, bert, gproc, kvdb],
-    start_em(Apps),
-    ?debug("Started support apps ~p", [Apps]),
-    application:load(exoport),
-    SetUps = case application:get_env(exoport, '$setup_hooks') of
-	       undefined -> [];
-	       {ok, List} -> List
-	     end,
-    ?debug("exoport setup hooks ~p", [SetUps]),
-    [erlang:apply(M,F,A) || {_Phase, {M, F, A}} <- SetUps],
-    ?debug("exoport setup hooks executed.", []),
-    start_em([exoport]),
-    ?debug("Started exoport", []),
-    ok.
+    exoport:start().
+    %% Apps = [crypto, public_key, exo, bert, gproc, kvdb],
+    %% start_em(Apps),
+    %% ?debug("Started support apps ~p", [Apps]),
+    %% application:load(exoport),
+    %% SetUps = case application:get_env(exoport, '$setup_hooks') of
+    %% 	       undefined -> [];
+    %% 	       {ok, List} -> List
+    %% 	     end,
+    %% ?debug("exoport setup hooks ~p", [SetUps]),
+    %% [erlang:apply(M,F,A) || {_Phase, {M, F, A}} <- SetUps],
+    %% ?debug("exoport setup hooks executed.", []),
+    %% start_em([exoport]),
+    %% ?debug("Started exoport", []),
+    %% ok.
 
 start_demo_support() ->
     Apps1 = [gpio, spi, uart, piface],
