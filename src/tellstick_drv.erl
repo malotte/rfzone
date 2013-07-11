@@ -756,7 +756,7 @@ event_notify(String, Ctx) ->
     Event = 
 	[ case string:tokens(D, ":") of
 	      ["data",Data="0x"++Value] ->
-		  try list_to_integer(Value,16) of
+		  try erlang:list_to_integer(Value,16) of
 		      V -> {data, V}
 		  catch
 		      error:Error ->  
