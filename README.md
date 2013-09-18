@@ -1,10 +1,12 @@
 rfZone
 =====
 
-rfZone is an erlang application that enables remote control handling from 
-an iPhone/iPod/iPhone app.
+rfZone is an erlang application that acts as a trigger multiplexor.
+I.e. it can receive input triggers from various sources and, according to it's configuration, create wanted output triggers.
 
-To use rfZone you need:
+![Rfzone](https://github.com/malotte/rfzone/raw/master/rfzone.png)
+
+To use rfZone for remote control handling from an iPhone/iPad app you need:
 <ul>
 <li>A tellstick usb pin, see www.telldus.com. </li>
 <li>A computer running Linux or MacOS (Windows will be available later).</li>
@@ -21,6 +23,9 @@ rfZone currently has support for the following remote control protocols:
 <li>risingsun</li>
 </ul>
 For information on what protocol a specific brand uses see [Protocol - Brand Map](https://github.com/malotte/rfzone/wiki/Protocol---Brand-Map).<br/>
+
+To use rfZone for hardware io handling you need the computer to have accessible io-pins, for ex a Raspberry Pi, possibly equipped with a PiFace interface board.<br/>
+
 ### Dependencies
 
 To build rfZone you will need a working installation of Erlang R15B (or
@@ -36,6 +41,13 @@ rfZone also requires the following applications to be installed:
 <li>uart - https://github.com/tonyrog/uart</li>
 <li>can - https://github.com/tonyrog/can</li>
 <li>canopen - https://github.com/tonyrog/canopen</li>
+</ul>
+
+In addition, if you want to use rfZone for multiplexing of hardware io, you alsoneed:
+<ul>
+<li>gpio - https://github.com/Feuerlabs/gpio</li>
+<li>spi - https://github.com/tonyrog/spi (optional)</li>
+<li>piface - https://github.com/tonyrog/piface (optional)</li>
 </ul>
 
 To use the tellstick usb pin you need the correct driver installed.
