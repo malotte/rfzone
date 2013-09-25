@@ -9,7 +9,6 @@ I.e. it can receive input triggers from various sources and, according to it's c
 To use rfZone for remote control handling from an iPhone/iPad app you need:
 <ul>
 <li>A tellstick usb pin, see www.telldus.com. </li>
-<li>A computer running Linux or MacOS (Windows will be available later).</li>
 <li>An iPhone/iPod/iPad with the Seazone RC app, available at App Store.</li>
 </ul>
 
@@ -26,6 +25,8 @@ For information on what protocol a specific brand uses see [Protocol - Brand Map
 
 To use rfZone for hardware io handling you need the computer to have accessible io-pins, for ex a Raspberry Pi, possibly equipped with a PiFace interface board.<br/>
 
+To use rfZone for sending and receiving sms you need a modem.<br/>
+
 ### Dependencies
 
 To build rfZone you will need a working installation of Erlang R15B (or
@@ -34,7 +35,8 @@ Information on building and installing [Erlang/OTP](http://www.erlang.org)
 can be found [here](https://github.com/erlang/otp/wiki/Installation)
 ([more info](https://github.com/erlang/otp/blob/master/INSTALL.md)).
 
-rfZone is built using rebar that can be found [here](https://github.com/basho/rebar), with building instructions [here](https://github.com/basho/rebar/wiki/Building-rebar).
+rfZone is built using rebar that can be found [here](https://github.com/rebar/rebar), with building instructions [here](https://github.com/rebar/rebar/wiki/Building-rebar). rebar's dynamic configuration mechanism, described [here](https://github.com/rebar/rebar/wiki/Dynamic-configuration), is used so the environment variable ``REBAR_DEPS` should be set to the directory where your erlang applications are located.
+
 
 rfZone also requires the following applications to be installed:
 <ul>
@@ -43,11 +45,21 @@ rfZone also requires the following applications to be installed:
 <li>canopen - https://github.com/tonyrog/canopen</li>
 </ul>
 
-In addition, if you want to use rfZone for multiplexing of hardware io, you alsoneed:
+If you want to use rfZone for hardware io, as input triggers or as output, you also need:
 <ul>
 <li>gpio - https://github.com/Feuerlabs/gpio</li>
 <li>spi - https://github.com/tonyrog/spi (optional)</li>
 <li>piface - https://github.com/tonyrog/piface (optional)</li>
+</ul>
+
+If you want to use rfZone for sms, as input triggers or as output, you need:
+<ul>
+<li>gsms - https://github.com/tonyrog/gsms </li>
+</ul>
+
+If you want rfZone sending email as output, you need:
+<ul>
+<li>gen_smtp - https://github.com/Vagabond/gen_smtp </li>
 </ul>
 
 To use the tellstick usb pin you need the correct driver installed.

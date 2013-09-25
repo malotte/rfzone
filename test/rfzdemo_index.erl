@@ -132,7 +132,7 @@ light(Colour) ->
 event({Colour, Action} = Event) ->
     ?dbg("event ~p",[Event]),
     %% Call exodm / device 1
-    Result = rfzone_customer_server:digital_output("rfzone1", 
+    Result = rfzone_customer_server:digital_output("rfzone2", 
 	colour2channel(Colour), 
 	Action),   
    ?dbg("result ~p",[Result]),

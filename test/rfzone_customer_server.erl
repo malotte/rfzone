@@ -84,7 +84,7 @@ stop_receive_all()  ->
     gen_server:cast(?SERVER, stop_receive_all).
 
 digital_output(Device, Channel, Action) ->
-    gen_server:call(?SERVER, {digital_output, Device, Channel, Action}).
+    gen_server:call(?SERVER, {digital_output, Device, Channel, Action}, 20000).
 
 %% @doc
 %%   Subscribe to changes http requests from exodm.
