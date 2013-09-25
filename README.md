@@ -6,6 +6,8 @@ I.e. it can receive input triggers from various sources and, according to it's c
 
 ![Rfzone](https://github.com/malotte/rfzone/raw/master/rfzone.png)
 
+The internal format used is CANopen.
+
 To use rfZone for remote control handling from an iPhone/iPad app you need:
 <ul>
 <li>A tellstick usb pin, see www.telldus.com. </li>
@@ -35,7 +37,7 @@ Information on building and installing [Erlang/OTP](http://www.erlang.org)
 can be found [here](https://github.com/erlang/otp/wiki/Installation)
 ([more info](https://github.com/erlang/otp/blob/master/INSTALL.md)).
 
-rfZone is built using rebar that can be found [here](https://github.com/rebar/rebar), with building instructions [here](https://github.com/rebar/rebar/wiki/Building-rebar). rebar's dynamic configuration mechanism, described [here](https://github.com/rebar/rebar/wiki/Dynamic-configuration), is used so the environment variable ``REBAR_DEPS` should be set to the directory where your erlang applications are located.
+rfZone is built using rebar that can be found [here](https://github.com/rebar/rebar), with building instructions [here](https://github.com/rebar/rebar/wiki/Building-rebar). rebar's dynamic configuration mechanism, described [here](https://github.com/rebar/rebar/wiki/Dynamic-configuration), is used so the environment variable `REBAR_DEPS` should be set to the directory where your erlang applications are located.
 
 
 rfZone also requires the following applications to be installed:
@@ -115,7 +117,7 @@ There is a quick way to run the application for testing:
 $ erl -config sys -pa <path>/rfzone/ebin
 >rfzone:start().
 ```
-(Instead of specifing the path to the ebin directory you can set the environment ERL_LIBS.)
+(Instead of specifing the path to the ebin directory you can set the environment variable `ERL_LIBS.)
 
 It is possible to change configuration file using:
 
