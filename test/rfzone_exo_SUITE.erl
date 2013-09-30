@@ -28,7 +28,7 @@
 -compile(export_all).
 
 -include_lib("common_test/include/ct.hrl").
--include("rfzone.hrl").
+-include_lib("rfzone/include/rfzone.hrl").
 -include("rfzone_test.hrl").
 
 -import(rfzone_test_lib, [configure_rfzone_account/2,

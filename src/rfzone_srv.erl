@@ -58,7 +58,10 @@
 	 terminate/2, 
 	 code_change/3]).
 
-%% Testing
+%% Execution process
+-export([execute_mfa/4]).
+
+%% testing
 -export([debug/1, 
 	 dump/0]).
 -export([rid_translate/1]).
@@ -120,6 +123,13 @@
 	  polarity = false %% Switch polarity of value
 	}).
 
+-record(apply_item,
+	{
+	  pid::pid(),  
+	  timer::timeout(),   
+	  output::term()
+	}).
+
 %% Loop data
 -record(ctx,
 	{
@@ -131,6 +141,8 @@
 	  device = {simulated, ?DEF_VERSION}::tuple(),  
 	  items = []::list(),   %% controlled items
 	  events = []::list(),  %% controlled events
+	  apps = []::list(atom()),  %% apps to verify loaded
+	  apply_list = []::list(#apply_item{}), %% outstanding apply request
 	  file = ""::string(),  %% full name of conf file loaded	  
 	  piface_initialized = false::boolean(), %% flag needed for gpio/piface
 	  piface_mask = 16#ff::integer(), %% Values for piface pins
@@ -443,7 +455,6 @@ conf(Args,CoNode) ->
 		true -> reset_items(Items);
 		false -> do_nothing
 	    end,
-	    %% PifaceInit = init_piface_if_needed(Items),
 	    power_on(Nid, Items),
 	    {PifaceInit,Events1} = init_events(Events, [], false),
 	    process_flag(trap_exit, true),
@@ -559,12 +570,6 @@ handle_call({reload, File}, _From,
 			      false -> Items
 			  end
 		  end, [], OldItems),
-
-	    %% PifaceInit = 
-	    %% case Ctx#ctx.piface_initialized of
-	    %% false -> init_piface_if_needed(NewItems);
-	    %% true -> true
-	    %% end,
 
 	    power_on(Nid, ItemsToAdd),
 	    power_off(Nid, ItemsToRemove),
@@ -796,14 +801,14 @@ handle_info({gpio_interrupt, PinReg, Pin, Value} = Event, Ctx) ->
 
 handle_info({gsms, Ref, _Pdu}, Ctx) ->
     case lists:keyfind(Ref, #event.ref, Ctx#ctx.events) of
-	false ->
-	    ?debug("gsms ref not found, pdu=~p\n", [_Pdu]),
-	    {nreply, Ctx};
-	E ->
+	E when is_record(E, event)->
 	    %% Send the event as a CAN notification
 	    %% It will then be handled by handle_cast above
 	    event_notify(dummy, E), %% data must be in event def
-	    {noreply, Ctx}
+	    {noreply, Ctx};
+	false ->
+	    ?dbg("gsms ref not found, pdu=~p\n", [_Pdu]),
+	    {nreply, Ctx}
     end;
 
 handle_info({timeout,Ref,inhibit}, Ctx) ->
@@ -817,9 +822,46 @@ handle_info({timeout,Ref,inhibit}, Ctx) ->
 	    {noreply, Ctx}
     end;
 
+handle_info({apply_wait, AItem}, Ctx=#ctx {apply_list = AL}) ->
+    ?dbg("handle_info: apply_wait ~p.", [AItem]),
+    %% Add item to wait list
+    {noreply, Ctx#ctx{apply_list = [AItem | AL]}};
+
+handle_info({apply_timeout, Pid}, Ctx=#ctx {apply_list = AL}) ->
+    ?dbg("handle_info: apply_timeout for ~p.", [Pid]),
+    case lists:keytake(Pid, #apply_item.pid, AL) of
+	{value,_AI=#apply_item {output = OutPut}, NewAL} ->
+	    %% Stop Pid ??
+	    ?dbg("handle_info: killing ~p.", [Pid]),
+	    case erlang:is_process_alive(Pid) of
+		true -> exit(Pid, die);
+		false -> ok
+	    end,
+	    %% Maybe create output
+	    output({error, timeout}, OutPut),
+	    {noreply, Ctx#ctx {apply_list = NewAL}};
+	false ->
+	    ?dbg("handle_info: Pid ~p not found.", [Pid]),
+	    {noreply, Ctx}
+    end;
+
+handle_info({apply_result, Pid, Result}, Ctx=#ctx {apply_list = AL}) ->
+    ?dbg("handle_info: apply_result ~p for ~p.", [Result, Pid]),
+    NewAL = apply_result(Pid, Result, AL),
+    {noreply, Ctx#ctx {apply_list = NewAL}};
+
+handle_info({'EXIT', _Pid, normal} = _I, Ctx) ->
+    ?dbg("handle_info: ~p, assume normal apply execution.",[_I]),
+    {noreply, Ctx};
+ 
 handle_info({'EXIT', _Pid, co_node_terminated}, Ctx) ->
     ?dbg("handle_info: co_node terminated.",[]),
     {stop, co_node_terminated, Ctx};   
+ 
+handle_info({'EXIT', Pid, Reason} = _I, Ctx) ->
+    ?dbg("handle_info: ~p, assume abnormal apply execution.",[_I]),
+    self() ! {apply_result, Pid, {error, Reason}},
+    {noreply, Ctx};
  
 handle_info(_Info, Ctx) ->
     ?dbg("handle_info: unknown info ~p", [_Info]),
@@ -1170,6 +1212,26 @@ run(I=#item {type = exodm, unit = Mod, lchan = Fun, flags = Flags},
 	    ?ee("rpc call ~p:~p(~p) failed",[Mod, Fun, ExodmArgs]),
 	    {error, rpc_call_failed}
     end;
+
+run(I=#item {type = apply, unit = Mod, lchan = Fun, flags = Flags}, 
+    Active, _Style) ->
+    Args = proplists:get_value(args, Flags, []),
+    TimeOut = proplists:get_value(timeout, Flags, 5000),
+    OutPut = proplists:get_value(output, Flags, []),
+    ?dbg("run apply: M = ~p, F = ~p, A = ~p.",[Mod, Fun, Args]),
+    case execute_mfa(Mod,Fun,Args) of
+ 	Pid when is_pid(Pid) ->
+	    TRef = erlang:start_timer(TimeOut, self(), {apply_timeout, Pid}),
+	    self() ! {apply_wait, #apply_item {pid = Pid, 
+					       output = OutPut, 
+					       timer = TRef}},
+	    ok;
+	_Other ->
+	    ?dbg("run apply result ~p", [_Other]),
+	    ?ee("call ~p:~p(~p) failed",[Mod, Fun, Args]),
+	    {error, call_failed}
+    end;
+
 run(_I=#item {type = gpio, unit = PinReg, lchan = Pin, flags = Flags}, 
     true, _Style) ->
     ?dbg("run gpio set: PinReg = ~p, Pin = ~p, Flags = ~p.",
@@ -1219,6 +1281,73 @@ run(_I=#item {type = Type, unit = Unit, lchan = Chan}, Active, Style) ->
 	    ?dbg("tellstick_drv: crash=~p.", [Reason]),
 	    {error,Reason}
     end.
+
+%%--------------------------------------------------------------------
+%% Execution of function call items
+%%--------------------------------------------------------------------
+execute_mfa(M,F,A) 
+  when is_atom(M), is_atom(F), is_list(A) ->
+    ?dbg("execute: ~p:~p(~p).\n",[M,F,A]),
+    case proc_lib:spawn_link(?MODULE, execute_mfa, [M,F,A,  self()]) of
+	Pid when is_pid(Pid) -> 
+	    ?dbg("execute: spawned = ~p.",[Pid]),
+	    Pid;
+	_Other ->
+	    ?dbg("execute: spawned failed, result ~p.",[_Other]),
+	    {error, execute_failed}
+    end;
+execute_mfa(M,F,A) ->
+    ?dbg("execute: ~p:~p(~p) is illegal.",[M,F,A]),
+    {error, illegal_format}.
+    
+execute_mfa(M,F,A, Starter) -> 
+    %% Need to sleep a little so that the server can storethe Pid
+    timer:sleep(10),
+    try M:F(A) of
+	Result ->
+	    Starter ! {apply_result, self(), Result}
+    catch
+	error:_Reason ->
+	    ?dbg("execute: catch Reason = ~p",[_Reason]), 
+	    Starter ! {apply_result, self(), error}
+    end.
+
+
+%%--------------------------------------------------------------------
+%% Handle result of execution of function call items
+%%--------------------------------------------------------------------
+apply_result(Pid, Result, ApplyList) ->		        
+   case lists:keytake(Pid, #apply_item.pid, ApplyList) of
+	{value, _AI=#apply_item {output = OutPut, timer = TRef}, NewAL} ->
+	   ?dbg("apply_result: ~p found in apply list.",[_AI]),
+	    stop_timer(TRef),
+	    %% Maybe create output
+	    output(Result, OutPut),
+	    NewAL;
+	false ->
+	    ?dbg("apply_result: ~p not found.", [Pid]),
+	    ApplyList
+    end.
+
+output(Result, OutPut) when is_list(OutPut) ->
+    ?dbg("output: search in ~p for result ~p",[OutPut, Result]),
+    %% Use match spec to see if Result exists in Output list
+    %%  [{MatchHead = {<received result>, <rest of output tuple>}, 
+    %%    MatchCond = <no conditions>, 
+    %%    MatchBody = [return whole tuple]}]
+    MatchSpec = [{{Result, '_'}, [], ['$_']}],
+    CompMatchSpec = ets:match_spec_compile(MatchSpec),
+    output(ets:match_spec_run(OutPut, CompMatchSpec)).
+
+output([]) ->
+    ?dbg("output: no more output matching result",[]),
+    ok;
+output([{_Result, {Rid, RChannel, Type, Value} = _O} | Rest]) ->
+    ?dbg("output: ~p matched result ~p",[_O, _Result]),
+    Data = <<Value:32/little>>,
+    co_api:notify(rid_translate(Rid), type2msg(Type), RChannel, Data),
+    output(Rest).
+	    
 %%--------------------------------------------------------------------
 %% Init of items/events
 %%--------------------------------------------------------------------
@@ -1251,21 +1380,6 @@ init_if_gpio(?MSG_OUTPUT_ADD,
 init_if_gpio(_Cmd, _I) -> %% Release case ??
     ok.
 
-%% init_piface_if_needed([]) ->
-%%     false;
-%% init_piface_if_needed([_I=#item {type = gpio, flags = Flags} | Items]) ->
-%%     case proplists:get_value(board, Flags, cpu) of
-%% 	piface ->
-%% 	    call_piface(init_interrupt, []), %% Maybe not always ??
-%% 	    call_gpio(init, [?PIFACE_PIN]), 
-%% 	    call_gpio(set_interrupt, [?PIFACE_PIN, falling]),
-%% 	    true;
-%% 	_Board ->
-%% 	    init_piface_if_needed(Items)
-%%     end;
-%% init_piface_if_needed([_I=#item {} | Items]) ->
-%%     init_piface_if_needed(Items).
-   
 reset_items(Items) ->
     lists:foreach(
       fun(I) ->
@@ -1336,7 +1450,7 @@ init_events([E=#event {pattern = Pattern} | Rest],Acc,Pi) ->
 	    end;
 	sms ->
 	    Filter = sms_filter(Pattern),
-	    ?debug("sms filter = ~p\n", [Filter]),
+	    ?dbg("sms filter = ~p\n", [Filter]),
 	    case gsms:subscribe(Filter) of
 		{ok,Ref} ->
 		    init_events(Rest, [E#event{ref=Ref}|Acc], Pi);
@@ -1505,46 +1619,48 @@ flags(_Other, _Flags) ->
 %%--------------------------------------------------------------------
 %% Verify item/event configuration
 %%--------------------------------------------------------------------
-verify_item(_I=#item {type = email, unit = _Unit, lchan = _Lchan,
+verify_item(_I=#item {type = email, 
+		      unit = _Unit, 
+		      lchan = _Lchan,
 		      flags = Opts}) ->
-    case verify_app_started(gen_smtp) of
-	ok ->
-	    verify_mail_options(Opts);
-	Error -> Error
-    end;
+    verify_mail_options(Opts);
 
-verify_item(_I=#item {type = sms, unit = _Unit, lchan = _Lchan,
+verify_item(_I=#item {type = sms, 
+		      unit = _Unit, 
+		      lchan = _Lchan,
 		      flags = Opts}) ->
-    case verify_app_started(gsms) of
-	ok ->
-	    verify_sms_options(Opts);
-	Error -> Error
-    end;
+    verify_sms_options(Opts);
 
-verify_item(_I=#item {type = exodm, unit = Mod, lchan = Fun, flags = Flags}) 
+verify_item(I=#item {type = exodm = Type, 
+		     unit = Mod, 
+		     lchan = Fun, 
+		     flags = Flags}) 
   when is_atom(Mod), is_atom(Fun), is_list(Flags) ->
-    verify_rpc_args(Flags);
+    verify_flags(Type, Flags, I);
 
-verify_item(_I=#item {type = exodm, unit = _Mod, lchan = _Fun, flags = _Args}) ->
+verify_item(_I=#item {type = exodm, 
+		      unit = _Mod, 
+		      lchan = _Fun, 
+		      flags = _Args}) ->
     ?dbg("verify_item: illegal exodm format, mod ~p, fun ~p, args ~p.",
 	 [_Mod, _Fun, _Args]),
     {error, illegal_exodm_format};
 
-verify_item(I=#item {type = gpio, flags = Flags}) ->
-    case verify_general(I) of
-	ok ->
-	    case proplists:get_value(board, Flags) of
-		piface -> verify_apps_started([gpio, spi, piface]);
-		cpu -> verify_app_started(gpio);
-		_Unknown -> {error, unknown_board}
-	    end;
-	E -> E
-    end;
+verify_item(I=#item {type = apply = Type, 
+		     unit = Mod, 
+		     lchan = Fun, 
+		     flags = Flags}) 
+  when is_atom(Mod), is_atom(Fun), is_list(Flags) ->
+    verify_flags(Type, Flags, I);
 
+%% The rest are remote control types
 verify_item(I=#item {}) ->
-    verify_general(I).
+    verify_rf(I).
  
-verify_general(I=#item {type = Type, unit = Unit, lchan = Channel, flags = Flags}) ->
+verify_rf(I=#item {type = Type, 
+		   unit = Unit, 
+		   lchan = Channel, 
+		   flags = Flags}) ->
     case verify_unit_range(Type, Unit) of
 	ok ->
 	    case verify_channel_range(Type, Channel) of
@@ -1564,23 +1680,27 @@ verify_general(I=#item {type = Type, unit = Unit, lchan = Channel, flags = Flags
     end.
 
 verify_apps_started([]) ->
-    ok;
+    true;
 verify_apps_started([App | Apps]) ->
     case verify_app_started(App) of
-	ok -> verify_apps_started(Apps);
-	E -> E
+	true -> verify_apps_started(Apps);
+	false -> false
     end.
 	    
 verify_app_started(App) ->
-    case get(on_host) of
-	true -> 
-	    ok;
-	_Other -> 
-	    case lists:keymember(App, 1, application:which_applications()) of
-		true ->
-		    ok;
-		false ->
-		    {error, list_to_atom(atom_to_list(App) ++ "_not_runnning")}
+    case lists:keymember(App, 1, application:which_applications()) of
+	true ->
+	    true;
+	false ->
+	    %% Special handling of hardware io apps
+	    case {get(on_host), App} of
+		{true, A} when A =:= gpio;
+			       A =:= spi;
+			       A =:= piface -> 
+		    true;
+		_Other -> 
+		    ?warning("application ~p not runnning", [App]),
+		    false
 	    end
     end.
 
@@ -1614,6 +1734,12 @@ verify_event(_I=#event {pattern = Pattern,
 		end
        end, {error, bad_value_range},
 
+       fun() -> case proplists:get_value(apps, Pattern, []) of
+		    [] -> true;
+		    AppList -> verify_apps_started(AppList)
+		end
+       end, {error, app_not_started},
+
        fun() ->
 	       case proplists:get_value(protocol, Pattern) of
 		   gpio ->
@@ -1628,9 +1754,6 @@ verify_event(_I=#event {pattern = Pattern,
 
       ]).
 
-verify_rpc_args(_Args) ->
-    %% ??
-    ok.
 
 verify_sms_options([{K,V}|Opts]) ->
     case verify_sms_option(K,V) of
@@ -1654,6 +1777,8 @@ verify_sms_option(springback,Value) ->
     is_boolean(Value);
 verify_sms_option(body,Value) ->
     is_list(Value);
+verify_sms_option(apps,AppList) ->
+    verify_apps_started(AppList);
 verify_sms_option(K,_V) ->
     case lists:member(K, [smsc,rp,udhi,udh,srr,mref,
 			  vpf,vp,addr,pid,dcs,type,class,
@@ -1716,6 +1841,8 @@ verify_mail_option(digital,Value) ->
     is_boolean(Value);
 verify_mail_option(springback,Value) ->
     is_boolean(Value);
+verify_mail_option(apps,AppList) ->
+    verify_apps_started(AppList);
 verify_mail_option(_,_) ->
     unknown.
 
@@ -1860,7 +1987,7 @@ verify_gpio_event(Event) ->
 	true ->
 	    %% Optional 
 	    verify_event(Event, 
-			 [protocol,board,pin_reg,pin,data,interrupt,polarity]);
+			 [protocol,board,pin_reg,pin,data,interrupt,polarity,apps]);
 	false ->
 	    ?dbg("verify_gpio_event: missing pin",[])
     end.
@@ -1933,14 +2060,21 @@ verify_channel_range(_Type, _Channel) ->
 
 verify_flags(_Type, [], _I) ->
     ok;
-verify_flags(Type, [digital | Flags], I) 
-  when Type == nexa;
-       Type == nexax;
-       Type == waveman;
-       Type == sartano;
-       Type == ikea;
-       Type == risingsun;
-       Type == gpio ->
+verify_flags(Type, [{apps, AList} | Flags], I) ->
+    case verify_apps_started(AList) of
+	true -> verify_flags(Type, Flags, I);
+	false -> {error, needed_app_not_started}
+    end;
+verify_flags(Type, [{args, ArgList} | Flags], I) 
+  when Type == exodm;
+       Type == apply ->
+    %% Check args ??
+    verify_flags(Type, Flags, I);
+verify_flags(apply = Type, [{output, OutPut} | Flags], I) ->
+    %% Check output ??
+    verify_flags(Type, Flags, I);
+verify_flags(Type, [digital | Flags], I) ->
+    %% Always OK?
     verify_flags(Type, Flags, I);
 verify_flags(Type, [springback | Flags], I) 
   when Type == nexa;
@@ -1988,6 +2122,10 @@ verify_flags(gpio = Type, [{interrupt, Edge} | Flags], I)
 verify_flags(Type, [{inhibit,Time} | Flags], I)
   when is_integer(Time), Time >= 0 ->
     verify_flags(Type, Flags, I);
+verify_flags(Type, [{timeout,Time} | Flags], I)
+  when (Type == apply orelse Type == exodm),
+       is_integer(Time), Time >= 0 ->
+    verify_flags(Type, Flags, I);
 verify_flags(_Type, [_Flag | _Flags], _I) ->
     ?dbg("verify_flags: invalid type/flag combination ~p,~p", 
 		   [_Type, _Flag]),
@@ -2034,15 +2172,15 @@ bert_format_flags([], Acc) -> Acc.
 %% Debug printing
 %%--------------------------------------------------------------------
 fmt_item(I) when is_record(I,item) ->
-    io_lib:format("{rid:~.16#,rchan:~p,type:~p,unit:~p,chan:~p,"
-		  "active:~p,level:~p,flags=~s}",
+    io_lib:format("{rid:~.16#,rchan:~p,type:~p,unit:~p,chan:~p,~n"
+		  "active:~p,level:~p,~nflags=~s}",
 		  [I#item.rid, I#item.rchan, 
 		   I#item.type,I #item.unit, I#item.lchan, 
 		   I#item.active, I#item.level,
 		   fmt_flags(I#item.flags)]).
 
 fmt_event(E) when is_record(E, event) ->
-    io_lib:format("{~p,rid:~.16#,rchan:~w,type:~w,value:~w}", 
+    io_lib:format("{~p,~nrid:~.16#,rchan:~w,type:~w,value:~w}", 
 		  [E#event.pattern,E#event.rid,E#event.rchan, E#event.type,
 		   E#event.value]).
     
@@ -2053,7 +2191,7 @@ print_event(E) when is_record(E, event) ->
     io:format("event: ~s\n", [fmt_event(E)]).
 
 fmt_flags([Flag|Tail]) ->
-    [io_lib:format("~p ", [Flag]) | fmt_flags(Tail)];
+    [io_lib:format("~p~n", [Flag]) | fmt_flags(Tail)];
 fmt_flags([]) -> "".
 
   
