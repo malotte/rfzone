@@ -139,3 +139,8 @@ json_ok(TransId) ->
 
 notification_url(Port) ->
     "https://localhost:" ++ integer_to_list(Port) ++ "/callback".
+
+toggle(true) ->
+    on;
+toggle(false) ->
+    off.

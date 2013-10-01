@@ -43,6 +43,7 @@
 
 -export([start_demo/0]).
 -export([start_exo_demo/0]).
+-export([start_host_demo/0]).
 
 %%%===================================================================
 %%% API
@@ -98,7 +99,7 @@ start_exo() ->
 
 start_demo() ->
     start_demo_support(),
-    start_em([lager, canopen, rfzone]),
+    start_em([lager, ale, canopen, rfzone]),
     ok.    
     
 start_exo_demo() ->
@@ -109,21 +110,11 @@ start_exo_demo() ->
 
 start_exo_support() ->
     exoport:start().
-    %% Apps = [crypto, public_key, exo, bert, gproc, kvdb],
-    %% start_em(Apps),
-    %% ?debug("Started support apps ~p", [Apps]),
-    %% application:load(exoport),
-    %% SetUps = case application:get_env(exoport, '$setup_hooks') of
-    %% 	       undefined -> [];
-    %% 	       {ok, List} -> List
-    %% 	     end,
-    %% ?debug("exoport setup hooks ~p", [SetUps]),
-    %% [erlang:apply(M,F,A) || {_Phase, {M, F, A}} <- SetUps],
-    %% ?debug("exoport setup hooks executed.", []),
-    %% start_em([exoport]),
-    %% ?debug("Started exoport", []),
-    %% ok.
 
+start_host_demo() ->
+    %% No hw io available
+    start_em([uart, gsms, lager, ale, canopen, rfzone]).
+    
 start_demo_support() ->
     Apps1 = [gpio, spi, uart, piface],
     start_em(Apps1),

@@ -62,8 +62,7 @@
 -export([execute_mfa/4]).
 
 %% testing
--export([debug/1, 
-	 dump/0]).
+-export([dump/0]).
 -export([rid_translate/1]).
 
 -define(SERVER, ?MODULE). 
@@ -126,7 +125,7 @@
 -record(apply_item,
 	{
 	  pid::pid(),  
-	  timer::timeout(),   
+	  timer::timeout(),
 	  output::term()
 	}).
 
@@ -138,15 +137,15 @@
 	  node_id::integer(), %% nodeid | xnodeid of co_node, needed in notify
 	                      %% should maybe be fetched when needed instead 
 	                      %% of stored in loop data ??
-	  device = {simulated, ?DEF_VERSION}::tuple(),  
+	  device = {simulated, ?DEF_VERSION}::tuple(),
+	  retry_timeout = infinity::timeout(),
 	  items = []::list(),   %% controlled items
 	  events = []::list(),  %% controlled events
 	  apps = []::list(atom()),  %% apps to verify loaded
 	  apply_list = []::list(#apply_item{}), %% outstanding apply request
 	  file = ""::string(),  %% full name of conf file loaded	  
 	  piface_initialized = false::boolean(), %% flag needed for gpio/piface
-	  piface_mask = 16#ff::integer(), %% Values for piface pins
-	  trace
+	  piface_mask = 16#ff::integer() %% Values for piface pins
 	}).
 
 %% For dialyzer
@@ -155,8 +154,7 @@
 		       {reset, TrueOrFalse::boolean()} |
 		       {retry_timeout, TimeOut::timeout()} |
 %%		       {simulated, TrueOrFalse::boolean()} |
-		       {linked, TrueOrFalse::boolean()} |
-		       {debug, TrueOrFalse::boolean()}.
+		       {linked, TrueOrFalse::boolean()}.
 
 %%%===================================================================
 %%% API
@@ -393,10 +391,6 @@ reload(File) ->
 dump() ->
     gen_server:call(?SERVER, dump).
 
-%% @private
-debug(TrueOrFalse) when is_boolean(TrueOrFalse) ->
-    gen_server:call(?SERVER, {debug, TrueOrFalse}).
-
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -440,13 +434,13 @@ init(Args) ->
 conf(Args,CoNode) ->
     FileName = proplists:get_value(config, Args, "rfzone.conf"),
     ConfFile =  full_filename(FileName),
-    {ok,Trace} = set_trace(proplists:get_value(debug, Args, false), undefined),
+    TOut = proplists:get_value(retry_timeout, Args, infinity),
 
     ?dbg("init: File = ~p", [ConfFile]),
 
     case load_config(ConfFile) of
 	{ok, _Conf=#conf {device = Device, items = Items, events = Events}} ->
-	    start_device(Args, Device),
+	    start_device(Device, [{retry_timeout, TOut}]),
 	    tellstick_drv:subscribe(),
 	    {ok, _Dict} = co_api:attach(CoNode),
 	    Nid = co_api:get_option(CoNode, id),
@@ -460,12 +454,12 @@ conf(Args,CoNode) ->
 	    process_flag(trap_exit, true),
 	    {ok, #ctx { co_node = CoNode, 
 			device = Device,
+			retry_timeout = TOut,
 			node_id = Nid, 
 			items=Items,
 			events=Events1,
 			file=ConfFile,
-			piface_initialized = PifaceInit,
-			trace=Trace
+			piface_initialized = PifaceInit
 		      }};
 	Error ->
 	    ?dbg("init: Not possible to load configuration file ~p.",
@@ -473,25 +467,22 @@ conf(Args,CoNode) ->
 	    {stop, Error}
     end.
 
-start_device(Args, Device) ->
-    %% Debug flag is inherited by tellstick_drv
-    Debug = proplists:get_value(debug, Args, false),
+start_device(Device, Opts) ->
     case Device of
 	{simulated, _Version} ->
 	    ?dbg("start_device: running simulated.",[]),
-	    %% How handle ??
-	    Args1 = [{device,{simulated, ?DEF_VERSION}},
-		     {debug, Debug}],
-	    ?dbg("start_device: args=~p.", [Args1]),
-	    {ok, _Pid} = tellstick_drv:start_link(Args1);
+	    {ok, _Pid} = 
+		tellstick_drv:start_link([{device,{simulated, ?DEF_VERSION}}]);
 	Device ->
-	    TOut = proplists:get_value(retry_timeout, Args, infinity),
-	    Args1 = [{device,Device},
-		     {retry_timeout, TOut},
-		     {debug,Debug}],
-	    ?dbg("start_device: args=~p.", [Args1]),
-	    {ok, _Pid} = tellstick_drv:start_link(Args1)
+	    TOut = proplists:get_value(retry_timeout, Opts, infinity),
+	    {ok, _Pid} = 
+		tellstick_drv:start_link([{device,Device}, 
+					  {retry_timeout, TOut}])
     end.
+
+change_device(NewDevice, _Ctx=#ctx {retry_timeout = TOut}) ->
+    tellstick_drv:stop(),
+    start_device(NewDevice, [{retry_timeout, TOut}]).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -502,7 +493,6 @@ start_device(Args, Device) ->
 %% <li> reload - Reloads the configuration file.</li>
 %% <li> new_co_node - Switch of CANopen node.</li>
 %% <li> dump - Writes loop data to standard out (for debugging).</li>
-%% <li> debug - Turns on/off debug output. </li>
 %% <li> stop - Stops the application.</li>
 %% </ul>
 %%
@@ -512,7 +502,6 @@ start_device(Args, Device) ->
 	{reload, File::atom()} |
 	{new_co_node, Id::term()} |
 	dump |
-	{debug, TrueOrFalse::boolean()} |
 	stop.
 
 -spec handle_call(Request::call_request(), From::{pid(), Tag::term()}, Ctx::#ctx{}) ->
@@ -523,15 +512,15 @@ start_device(Args, Device) ->
 
 handle_call({reload, File}, _From, 
 	    Ctx=#ctx {node_id = Nid, 
-		      device = OldDevice, 
+		      device = OldDevice,
 		      items = OldItems,
-		      events = OldEvents    }) ->
+		      events = OldEvents}) ->
     ConfFile = full_filename(File),
     ?dbg("reload ~p",[ConfFile]),
     case load_config(ConfFile) of
 	{ok,_Conf=#conf {device=NewDevice,items=NewItems,events=Events}} ->
 	    if NewDevice =/= OldDevice ->
-		    tellstick_drv:change_device(NewDevice);
+		    change_device(NewDevice, Ctx);
 	       true ->
 		    do_nothing
 	    end,
@@ -623,7 +612,7 @@ handle_call({configure_device, NewDevice} = _X, _From,
 	    Ctx=#ctx {device = OldDevice}) ->
     ?dbg("handle_call: received configure_device req ~p.",[_X]),
     if NewDevice =/= OldDevice ->
-	    tellstick_drv:change_device(NewDevice);
+	    change_device(NewDevice, Ctx);
        true ->
 	    do_nothing
     end,
@@ -647,24 +636,17 @@ handle_call(dump, _From,
 		      file = File,
 		      events = Events,
 		      items = Items}) ->
-    io:format("Ctx:\n,", []),
-    io:format("Device = ~p\n,", [Device]),
-    io:format("CoNode = ~p\n,", [CoNode]),
+    io:format("Ctx:\n", []),
+    io:format("Device = ~p\n", [Device]),
+    io:format("CoNode = ~p\n", [CoNode]),
     io:format("NodeId = {~p, ~.16#},\n", [Type, Nid]),
-    io:format("Configuration file = ~p\n,", [File]),
+    io:format("Configuration file = ~p\n", [File]),
     io:format("Items=\n", []),
     lists:foreach(fun(Item) -> print_item(Item) end, Items),
     io:format("Events=\n", []),
     lists:foreach(fun(Evt) -> print_event(Evt) end, Events),
     {reply, ok, Ctx};
 
-handle_call({debug, On}, _From, Ctx) ->
-    case set_trace(On, Ctx#ctx.trace) of
-	{ok,Trace} ->
-	    {reply, ok, Ctx#ctx { trace = Trace }};
-	Error ->
-	    {reply, Error, Ctx}
-    end;
 handle_call(stop, _From, Ctx) ->
     ?dbg("stop:",[]),
     {stop, normal, ok, Ctx};
@@ -873,7 +855,7 @@ handle_info(_Info, Ctx) ->
 -spec terminate(Reason::term(), Ctx::#ctx{}) -> 
 		       no_return().
 
-terminate(_Reason, Ctx=#ctx {co_node = CoNode}) ->
+terminate(_Reason, _Ctx=#ctx {co_node = CoNode}) ->
     ?dbg("terminate: Reason = ~p",[_Reason]),
     case co_api:alive(CoNode) of
 	true ->
@@ -886,7 +868,6 @@ terminate(_Reason, Ctx=#ctx {co_node = CoNode}) ->
     ?dbg("terminate: detached.",[]),
     tellstick_drv:stop(),
     ?dbg("terminate: driver stopped.",[]),
-    stop_trace(Ctx#ctx.trace),
     ok.
 
 %%--------------------------------------------------------------------
@@ -1213,9 +1194,9 @@ run(I=#item {type = exodm, unit = Mod, lchan = Fun, flags = Flags},
 	    {error, rpc_call_failed}
     end;
 
-run(I=#item {type = apply, unit = Mod, lchan = Fun, flags = Flags}, 
+run(_I=#item {type = apply, unit = Mod, lchan = Fun, flags = Flags}, 
     Active, _Style) ->
-    Args = proplists:get_value(args, Flags, []),
+    Args = apply_args(Active, proplists:get_value(args, Flags, []),[]),
     TimeOut = proplists:get_value(timeout, Flags, 5000),
     OutPut = proplists:get_value(output, Flags, []),
     ?dbg("run apply: M = ~p, F = ~p, A = ~p.",[Mod, Fun, Args]),
@@ -1223,7 +1204,7 @@ run(I=#item {type = apply, unit = Mod, lchan = Fun, flags = Flags},
  	Pid when is_pid(Pid) ->
 	    TRef = erlang:start_timer(TimeOut, self(), {apply_timeout, Pid}),
 	    self() ! {apply_wait, #apply_item {pid = Pid, 
-					       output = OutPut, 
+					       output = OutPut,
 					       timer = TRef}},
 	    ok;
 	_Other ->
@@ -1303,13 +1284,13 @@ execute_mfa(M,F,A) ->
 execute_mfa(M,F,A, Starter) -> 
     %% Need to sleep a little so that the server can storethe Pid
     timer:sleep(10),
-    try M:F(A) of
+    try apply(M,F,A) of
 	Result ->
 	    Starter ! {apply_result, self(), Result}
     catch
-	error:_Reason ->
-	    ?dbg("execute: catch Reason = ~p",[_Reason]), 
-	    Starter ! {apply_result, self(), error}
+	error:Reason ->
+	    ?dbg("execute: catch Reason = ~p",[Reason]), 
+	    Starter ! {apply_result, self(), {error, Reason}}
     end.
 
 
@@ -1717,7 +1698,9 @@ verify_event(_I=#event {pattern = Pattern,
 		    analog -> true;
 		    digital -> true;
 		    encoder -> true;
-		    _ -> false
+		    _ -> 
+			?dbg("verify_event: illegal type ~p.", [Type]),
+			false
 		end
        end, {error, bad_channel_type},
 
@@ -1730,7 +1713,10 @@ verify_event(_I=#event {pattern = Pattern,
 			%% Value will be taken from input
 			true;
 		    encoder -> is_integer(Value);
-		    _ -> false
+		    _ -> 
+			?dbg("verify_event: illegal type/value ~p/~p.", 
+			     [Type, Value]),
+			false
 		end
        end, {error, bad_value_range},
 
@@ -1965,7 +1951,8 @@ verify_event(Event, [K|Ks]) ->
     verify_event(Event1, Ks);
 verify_event([], _) ->
     true;
-verify_event(_, []) ->
+verify_event(_E, []) ->
+    ?dbg("verify_event: unexpected key(s) ~p.", [_E]),
     false.
 
 %% take subset of proplist
@@ -1978,7 +1965,8 @@ verify_sms_event(Event) ->
     %% fixme add filter and or not
     verify_event(Event, [protocol,data,polarity,
 			 type,class,alphabet,pid,src,dst,
-			 anumber,bnumber,smsc,reg_exp]).
+			 anumber,bnumber,smsc,reg_exp,
+			 apps]).
 
 
 verify_gpio_event(Event) ->
@@ -1987,7 +1975,9 @@ verify_gpio_event(Event) ->
 	true ->
 	    %% Optional 
 	    verify_event(Event, 
-			 [protocol,board,pin_reg,pin,data,interrupt,polarity,apps]);
+			 [protocol,board,pin_reg,pin,data,
+			  interrupt,polarity,
+			  apps]);
 	false ->
 	    ?dbg("verify_gpio_event: missing pin",[])
     end.
@@ -2076,11 +2066,8 @@ verify_flags(apply = Type, [{output, OutPut} | Flags], I) ->
 verify_flags(Type, [digital | Flags], I) ->
     %% Always OK?
     verify_flags(Type, Flags, I);
-verify_flags(Type, [springback | Flags], I) 
-  when Type == nexa;
-       Type == waveman;
-       Type == sartano;
-       Type == risingsun ->
+verify_flags(Type, [springback | Flags], I) ->
+    %% Always OK?
     verify_flags(Type, Flags, I);
 verify_flags(Type, [analog | Flags], I) 
   when Type == nexax;
@@ -2196,25 +2183,6 @@ fmt_flags([]) -> "".
 
   
 %%--------------------------------------------------------------------
-%% Debug trace control
-%%--------------------------------------------------------------------
-stop_trace(undefined) ->
-    undefined;
-stop_trace(Trace) ->
-    lager:stop_trace(Trace),
-    undefined.
-
-set_trace(false, Trace) ->
-    Trace1 = stop_trace(Trace),
-    lager:set_loglevel(lager_console_backend, info),
-    {ok,Trace1};
-set_trace(true, undefined) ->
-    lager:trace_console([{module,?MODULE}], debug);
-set_trace(true, Trace) -> 
-    {ok,Trace}.
-
-
-%%--------------------------------------------------------------------
 %% Utilities
 %%--------------------------------------------------------------------
 %% @private
@@ -2251,12 +2219,21 @@ unsubscribe(CoNode) ->
 			  co_api:extended_notify_unsubscribe(CoNode, Index)
 		  end, ?COMMANDS).
 
+%% If needed add {value, Active}
 rpc_args(_I=#item {}, _Active, [], Acc) ->
     lists:reverse(Acc);
 rpc_args(I=#item {}, Active, [{_Key, _Value} = Arg | Args], Acc) ->
     rpc_args(I, Active, Args, [Arg | Acc]);
-rpc_args(I=#item {}, Active, [value = Key | Args], Acc) ->
+rpc_args(I=#item {}, Active, [rfzone_active_value = Key | Args], Acc) ->
     rpc_args(I, Active, Args, [{Key, bool2int(Active)} | Acc]).
+
+%% If needed add Active
+apply_args(_Active, [], Acc) ->
+    lists:reverse(Acc);
+apply_args(Active, [rfzone_active_value | Args], Acc) ->
+    apply_args(Active, Args, [Active | Acc]);
+apply_args(Active, [Arg | Args], Acc) ->
+    apply_args(Active, Args, [Arg | Acc]).
 
 bool2int(true) -> 1;
 bool2int(false) -> 0.
