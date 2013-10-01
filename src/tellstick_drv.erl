@@ -29,14 +29,14 @@
 -behaviour(gen_server).
 
 -include_lib("lager/include/log.hrl").
+-include("rfzone.hrl").
 
 %% API
 -export([start_link/1, 
 	 stop/0,
 	 subscribe/0,
 	 subscribe/1,
-	 unsubscribe/1,
-	 change_device/1]).
+	 unsubscribe/1]).
 
 %% Remote control protocols
 -export([nexa/4, 
@@ -66,7 +66,6 @@
 -export([start_link/0, 
 	 test/0, 
 	 run_test/1, 
-	 debug/1,
 	 version/0,
 	 setopt/1,
 	 command/1]).
@@ -96,8 +95,7 @@
 	  reply_timer,    %% timeout waiting for reply
 	  reopen_ival,    %% interval betweem open retry 
 	  reopen_timer,   %% timer ref
-	  subs = [],      %% #subscription{}
-	  trace           %% debug tracing
+	  subs = []      %% #subscription{}
 	}).
 
 -define(TELLSTICK_SEND,  $S).       %% param byte...
@@ -115,8 +113,7 @@
 
 %% For dialyzer
 -type start_options()::{device, {Device::string() | simulated, v1 | v2}} |
-		       {retry_timeout, TimeOut::timeout()} |
-		       {debug, TrueOrFalse::boolean()}.
+		       {retry_timeout, TimeOut::timeout()}.
 
 
 %%%===================================================================
@@ -130,7 +127,6 @@
 %% Device contains the path to the Device and the version. <br/>
 %% Timeout =/= 0 means that if the driver fails to open the device it
 %% will try again in Timeout seconds.<br/>
-%% Debug controls trace output.<br/>
 %%
 %% @end
 %%--------------------------------------------------------------------
@@ -186,18 +182,6 @@ subscribe() ->
 -spec unsubscribe(Ref::reference()) -> ok | {error, Error::term()}.
 unsubscribe(Ref) ->
     gen_server:call(?SERVER, {unsubscribe,Ref}).
-
-%%--------------------------------------------------------------------
-%% @doc
-%% Changes device.
-%%
-%% @end
-%%--------------------------------------------------------------------
--spec change_device({DeviceName::string(), Version::atom()}) -> 
-			   ok | {error, Error::term()}.
-
-change_device(NewDevice) ->
-    gen_server:call(?SERVER, {change_device, NewDevice}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -336,11 +320,7 @@ risingsun(Code,Unit,On,[]) when
 		   {ok, Pid::pid()} | ignore | {error, Error::term()}.
 
 start_link() ->
-    start_link([{debug, true}, {device,{"/dev/tty.usbserial-A900I902", v1}}]).
-
-%% @private
-debug(TrueOrFalse) when is_boolean(TrueOrFalse) ->
-    gen_server:call(?SERVER, {debug, TrueOrFalse}).
+    start_link([{device,{"/dev/tty.usbserial-A900I902", v1}}]).
 
 version() ->
     gen_server:call(?SERVER, version).
@@ -375,7 +355,6 @@ send_pulses(PulseData) ->
 		  {stop, Reason::term()}.
 
 init(Opts) ->
-    {ok,Trace} = set_trace(proplists:get_bool(debug, Opts), undefined),
     lager:info("~p: init: args = ~p,\n pid = ~p\n", [?MODULE, Opts, self()]),
     {Device,Variant} = 
 	case proplists:lookup(device, Opts) of
@@ -394,15 +373,14 @@ init(Opts) ->
     S = #ctx { device = Device, 
 	       variant=Variant,
 	       reopen_ival = Reopen_ival,
-	       queue = queue:new(),
-	       trace = Trace },
+	       queue = queue:new()},
     case open(S) of
 	{ok, S1} -> {ok, S1};
 	Error -> {stop, Error}
     end.
 	    
 open(Ctx=#ctx {device = ""}) ->
-    lager:debug("TELLSTICK open: simulated\n", []),
+    ?dbg("TELLSTICK open: simulated\n", []),
     {ok, Ctx#ctx { uart=simulated, version="0" }};
 
 open(Ctx=#ctx {device = DeviceName, variant=Variant,
@@ -415,16 +393,16 @@ open(Ctx=#ctx {device = DeviceName, variant=Variant,
 	       {csize,8},{parity,none},{stopb,1}],
     case uart:open(DeviceName,Options) of
 	{ok,U} ->
-	    lager:debug("TELLSTICK open: ~s@~w -> ~p", [DeviceName,Speed,U]),
+	    ?dbg("TELLSTICK open: ~s@~w -> ~p", [DeviceName,Speed,U]),
 	    uart:send(U, "V+"), %% answer is picked in handle_info
 	    {ok, Ctx#ctx { uart=U }};
 	{error, E} when E == eaccess;
 			E == enoent ->
 	    if Reopen_ival == infinity ->
-		    lager:debug("open: Driver not started, reason = ~p.\n", [E]),
+		    ?dbg("open: Driver not started, reason = ~p.\n", [E]),
 		    {error, E};
 	       true ->
-		    lager:debug("open: uart could not be opened, will try again"
+		    ?dbg("open: uart could not be opened, will try again"
 				" in ~p millisecs.\n", [Reopen_ival]),
 		    Reopen_timer = erlang:start_timer(Reopen_ival,
 						      self(), reopen),
@@ -432,13 +410,13 @@ open(Ctx=#ctx {device = DeviceName, variant=Variant,
 	    end;
 	    
 	Error ->
-	    lager:debug("open: Driver not started, reason = ~p.\n", 
+	    ?dbg("open: Driver not started, reason = ~p.\n", 
 		 [Error]),
 	    Error
     end.
 
 close(Ctx=#ctx {uart = U}) when is_port(U) ->
-    lager:debug("TELLSTICK close: ~p", [U]),
+    ?dbg("TELLSTICK close: ~p", [U]),
     uart:close(U),
     {ok, Ctx#ctx { uart=undefined }};
 close(Ctx) ->
@@ -458,8 +436,6 @@ close(Ctx) ->
 	{sartano, Channel::integer(), On::boolean()} |
 	{ikea, System::integer(), Channel::integer(), Level::integer(), Style:: 0 | 1} |
 	{risingsun, Code::integer(), Unit::integer(), On::boolean()} |
-	{change_device, {DeviceName::string(), Version::atom()}} |
-	{debug, TrueOrFalse::boolean()} |
 	stop.
 
 -spec handle_call(Request::call_request(), From::{pid(), Tag::term()}, Ctx::#ctx{}) ->
@@ -487,7 +463,7 @@ handle_call(version, _From, Ctx) ->
 handle_call(Call,From,Ctx=#ctx {client = Client}) 
   when Client =/= undefined andalso Call =/= stop ->
     %% Driver is busy ..
-    lager:debug("handle_call: Driver busy, store call ~p", [Call]),
+    ?dbg("handle_call: Driver busy, store call ~p", [Call]),
     %% set timer already here? probably!
     Q = queue:in({call,Call,From}, Ctx#ctx.queue),
     {noreply, Ctx#ctx { queue = Q }};
@@ -507,24 +483,6 @@ handle_call({risingsun,Code,Unit,On},From,Ctx) ->
 
 handle_call({send_pulses,PulsData}, From, Ctx) ->
     command_pulse_data(PulsData, Ctx#ctx { client = From });
-
-handle_call({change_device, Device={_DeviceName, _Version}}, _From, Ctx) ->
-    lager:debug("handle_call: change device to ~p", [Device]),
-    close(Ctx),
-    case open(Ctx#ctx {device = Device}) of
-	{ok, Ctx1} ->
-	     {reply, ok, Ctx1};
-	Error ->
-	    {reply, Error, Ctx}
-    end;
-
-handle_call({debug, On}, _From, Ctx) ->
-    case set_trace(On, Ctx#ctx.trace) of
-	{ok,Trace} ->
-	    {reply, ok, Ctx#ctx { trace = Trace }};
-	Error ->
-	    {reply, Error, Ctx}
-    end;
 
 handle_call(stop, _From, Ctx) ->
     {stop, normal, ok, Ctx};
@@ -546,7 +504,7 @@ command(F, Args, Ctx=#ctx { client = _Client}) ->
 command_pulse_data(PulseData, Ctx=#ctx { uart=U }) when U =/= undefined ->
     case send_pulses_(U, PulseData) of
 	{ok,Command1} ->
-	    lager:debug("command: sent ~p, client ~p", 
+	    ?dbg("command: sent ~p, client ~p", 
 			[Command1,Ctx#ctx.client]),
 	    %% Wait for confirmation
 	    TRef = erlang:start_timer(3000, self(), reply),
@@ -554,7 +512,7 @@ command_pulse_data(PulseData, Ctx=#ctx { uart=U }) when U =/= undefined ->
 	{simulated, ok} ->
 	    {reply, ok, Ctx};
 	Other ->
-	    lager:debug("command: send failed, reason ~p", [Other]),
+	    ?dbg("command: send failed, reason ~p", [Other]),
 	    {reply, Other, Ctx}
     end;
 command_pulse_data(_PulseData, Ctx) ->
@@ -574,21 +532,21 @@ command_pulse_data(_PulseData, Ctx) ->
 			 {stop, Reason::term(), Ctx::#ctx{}}.
 
 handle_cast({setopt, {Option, Value}}, Ctx=#ctx { uart = U}) ->
-    lager:debug("handle_cast: setopt ~p = ~p", [Option, Value]),
+    ?dbg("handle_cast: setopt ~p = ~p", [Option, Value]),
     uart:setopt(U, Option, Value),
     {noreply, Ctx};
 handle_cast(Cast, Ctx=#ctx {uart = U, client=Client})
   when U =/= undefined, Client =/= undefined ->
-    lager:debug("handle_cast: Driver busy, store cast ~p", [Cast]),
+    ?dbg("handle_cast: Driver busy, store cast ~p", [Cast]),
     Q = queue:in({cast,Cast}, Ctx#ctx.queue),
     {noreply, Ctx#ctx { queue = Q }};
 handle_cast({command, Command}, Ctx=#ctx {uart = U}) ->
-    lager:debug("handle_cast: command ~p", [Command]),
+    ?dbg("handle_cast: command ~p", [Command]),
     _Reply = uart:send(U, Command),
-    lager:debug("handle_cast: command reply ~p", [_Reply]),
+    ?dbg("handle_cast: command reply ~p", [_Reply]),
     {noreply, Ctx};
 handle_cast(_Msg, Ctx) ->
-    lager:debug("handle_cast: Unknown message ~p", [_Msg]),
+    ?dbg("handle_cast: Unknown message ~p", [_Msg]),
     {noreply, Ctx}.
 
 %%--------------------------------------------------------------------
@@ -612,13 +570,13 @@ handle_cast(_Msg, Ctx) ->
 
 handle_info({timeout,TRef,reply}, 
 	    Ctx=#ctx {client=Client, reply_timer=TRef}) ->
-    lager:debug("handle_info: timeout waiting for port", []),
+    ?dbg("handle_info: timeout waiting for port", []),
     gen_server:reply(Client, {error, port_timeout}),
     Ctx1 = Ctx#ctx { reply_timer=undefined, client = undefined},
     next_command(Ctx1);
 
 handle_info({uart,U,Data},  Ctx) when U =:= Ctx#ctx.uart ->
-    lager:debug("handle_info: port data ~p", [Data]),
+    ?dbg("handle_info: port data ~p", [Data]),
     case trim(Data) of
 	[$+,CmdChar|_CmdReply] when Ctx#ctx.client =/= undefined, 
 				   CmdChar =:= hd(Ctx#ctx.command) ->
@@ -633,7 +591,7 @@ handle_info({uart,U,Data},  Ctx) when U =:= Ctx#ctx.uart ->
 	    Ctx1 = event_notify(EventData, Ctx),
 	    {noreply, Ctx1};
 	_ ->
-	    lager:debug("handle_info: reply ~p", [Data]),
+	    ?dbg("handle_info: reply ~p", [Data]),
 	    {noreply, Ctx}
     end;
 handle_info({uart_error,U,Reason}, Ctx) when U =:= Ctx#ctx.uart ->
@@ -660,12 +618,12 @@ handle_info({timeout,Ref,reopen}, Ctx) when Ctx#ctx.reopen_timer =:= Ref ->
     end;
 
 handle_info({'DOWN',Ref,process,_Pid,_Reason},Ctx) ->
-    lager:debug("handle_info: subscriber ~p terminated: ~p", 
+    ?dbg("handle_info: subscriber ~p terminated: ~p", 
 	 [_Pid, _Reason]),
     Ctx1 = remove_subscription(Ref,Ctx),
     {noreply, Ctx1};
 handle_info(_Info, Ctx) ->
-    lager:debug("handle_info: Unknown info ~p", [_Info]),
+    ?dbg("handle_info: Unknown info ~p", [_Info]),
     {noreply, Ctx}.
 
 %%--------------------------------------------------------------------
@@ -682,7 +640,6 @@ handle_info(_Info, Ctx) ->
 		       ok.
 
 terminate(_Reason, Ctx) ->
-    stop_trace(Ctx#ctx.trace),
     close(Ctx),
     ok.
 
@@ -702,23 +659,6 @@ code_change(_OldVsn, Ctx, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-
-stop_trace(undefined) ->
-    undefined;
-stop_trace(Trace) ->
-    lager:stop_trace(Trace),
-    undefined.
-
-%% enable/disable module debug trace
-set_trace(false, Trace) ->
-    Trace1 = stop_trace(Trace),
-    lager:set_loglevel(lager_console_backend, info),
-    {ok,Trace1};
-set_trace(true, undefined) ->
-    lager:trace_console([{module,?MODULE}], debug);
-set_trace(true, Trace) -> 
-    {ok,Trace}.
-
 
 next_command(Ctx) ->
     case queue:out(Ctx#ctx.queue) of
@@ -1021,7 +961,7 @@ reverse_bits_(Bits, I, RBits) ->
 
 
 send_pulses_(simulated, _Data) ->
-    lager:debug("send_command: Sending data =~p\n", [_Data]),
+    ?dbg("send_command: Sending data =~p\n", [_Data]),
     {simulated, ok};
 send_pulses_(U, Data) ->
     Data1 = ascii_data(Data),
@@ -1070,7 +1010,7 @@ xcommand([],T0,T1,T2,T3,Bits) ->
     U1 = if T1 =:= 0 -> 1; true -> T1 end,
     U2 = if T2 =:= 0 -> 1; true -> T2 end,
     U3 = if T3 =:= 0 -> 1; true -> T3 end,
-    lager:debug("xcommand: T0=~w,T=~w,T2=~w,T3=~w,Np=~w\n", [U0,U1,U2,U3,Np]),
+    ?dbg("xcommand: T0=~w,T=~w,T2=~w,T3=~w,Np=~w\n", [U0,U1,U2,U3,Np]),
     [U0,U1,U2,U3,Np | bitstring_to_list(<<Bits/bits, 0:R>>)].
 
 %%
