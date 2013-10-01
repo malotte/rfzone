@@ -73,7 +73,10 @@ rfZone currently has support for the following remote control protocols:
 <li>ikea</li>
 <li>risingsun</li>
 </ul>
+
 For information on what protocol a specific brand uses see [Protocol - Brand Map](https://github.com/malotte/rfzone/wiki/Protocol---Brand-Map).<br/>
+
+Available is also the possibilty to connect to the exosense service supplied by [Feuerlabs](http://www.feuerlabs.com).
 
 To use the tellstick usb pin you need the correct driver installed.
 So far it has been an FTDI driver that can be found at www.ftdichip.com, to be sure it might be advisable to check on www.telldus.com.
