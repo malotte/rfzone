@@ -971,13 +971,18 @@ handle_piface_event(Ctx=#ctx {piface_mask = OldMask}) ->
 	    %% No change, no action
 	    ?dbg("handle_piface_event: read input ~p, no change.", [OldMask]),
 	    Ctx;
-	NewMask ->
+	NewMask when is_integer(NewMask) ->
 	    ?dbg("handle_piface_event: read input new ~p, old ~p.", 
 		 [NewMask, OldMask]),
 	    Changed = NewMask bxor OldMask,
 	    %% Loop through mask and see which pins that have been changed
 	    piface_pin_event(Changed, 0, NewMask, 
-			     Ctx#ctx {piface_mask = NewMask})
+			     Ctx#ctx {piface_mask = NewMask});
+	{error, _Reason} ->
+	    %% Not possible to get value
+	    ?warning("handle_piface_event: read input failed, reason, ~p.", 
+		     [_Reason]),
+	    Ctx;
     end.
 
 piface_pin_event(0, _Pin, _NewMask, Ctx) ->
