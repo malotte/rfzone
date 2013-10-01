@@ -64,8 +64,14 @@ If you want rfZone sending email as output, you need:
 <li>gen_smtp - https://github.com/Vagabond/gen_smtp </li>
 </ul>
 
+Input triggers can also be used to call any erlang function using apply.
+You must of course then have relevant applications installed (and running).
+
+Available is also the possibilty to connect to the exosense service supplied by [Feuerlabs](https://www.feuerlabs.com).
+
 To use the tellstick usb pin you need the correct driver installed.
 So far it has been an FTDI driver that can be found at www.ftdichip.com, to be sure it might be advisable to check on www.telldus.com.
+
 
 ### Download
 
