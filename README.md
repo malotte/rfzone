@@ -25,7 +25,7 @@ rfZone also requires the following erlang applications to be installed:
 <li>canopen - https://github.com/tonyrog/canopen</li>
 </ul>
 
-#### Hardware io
+#### Hardware io dependencies
 To use rfZone for hardware io handling you need the computer to have accessible io-pins, for ex a Raspberry Pi, possibly equipped with a PiFace interface board.<br/>
 
 You also need the following erlang applications to be installed (and running):
@@ -35,7 +35,7 @@ You also need the following erlang applications to be installed (and running):
 <li>piface - https://github.com/tonyrog/piface (optional)</li>
 </ul>
 
-#### Sms
+#### Sms dependencies
 To use rfZone for sms, as input triggers or as output, you need a modem.<br/>
 
 You also need the following erlang application to be installed (and running):
@@ -43,21 +43,21 @@ You also need the following erlang application to be installed (and running):
 <li>gsms - https://github.com/tonyrog/gsms </li>
 </ul>
 
-#### Email
+#### Email dependencies
 If you want rfZone to send email as output, you need the following erlang application to be installed (and running):
 <ul>
 <li>gen_smtp - https://github.com/Vagabond/gen_smtp </li>
 </ul>
 
-#### Local function calls
+#### Local function calls dependencies
 Input triggers can also be used to call any erlang function using apply.
 You must of course then have the relevant applications installed (and running).
 
-#### Exosense
-Available is also the possibilty to connect to the exosense service supplied by [Feuerlabs](https://www.feuerlabs.com).<br/> 
+#### Exosense dependencies
+Available is also the possibilty to connect to the exosense service supplied by [Feuerlabs](http://www.feuerlabs.com).<br/> 
 Contact them for details on how to do this.
 
-#### Tellstick
+#### Tellstick dependencies
 To use rfZone for remote control handling from an iPhone/iPad app you need:
 <ul>
 <li>A tellstick usb pin, see www.telldus.com. </li>
@@ -75,8 +75,6 @@ rfZone currently has support for the following remote control protocols:
 </ul>
 
 For information on what protocol a specific brand uses see [Protocol - Brand Map](https://github.com/malotte/rfzone/wiki/Protocol---Brand-Map).<br/>
-
-Available is also the possibilty to connect to the exosense service supplied by [Feuerlabs](http://www.feuerlabs.com).
 
 To use the tellstick usb pin you need the correct driver installed.
 So far it has been an FTDI driver that can be found at www.ftdichip.com, to be sure it might be advisable to check on www.telldus.com.
