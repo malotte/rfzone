@@ -36,7 +36,6 @@
          layout/0, 
          event/1]).
 
--type nitrogen_element()::term() | list(term()).
 %% Nitrogen accumulator timeout ??
 %% Used in comet loop functions
 -define(LOOP_TIMEOUT, 9 * 1000).
@@ -192,7 +191,7 @@ feedback_loop() ->
 %% Common header for rfzdemo pages.
 %% @end
 %%--------------------------------------------------------------------
--spec header() -> nitrogen_element().
+-spec header() -> list(nitrogen_element()).
 
 header() ->
     #panel { 
@@ -207,7 +206,7 @@ header() ->
 %% Common footer for rfzdemo pages.
 %% @end
 %%--------------------------------------------------------------------
--spec footer() -> nitrogen_element().
+-spec footer() -> list(nitrogen_element()).
 
 footer() ->
     [#br{},
@@ -221,7 +220,7 @@ footer() ->
 %% Set nitrogen content type.
 %% @end
 %%--------------------------------------------------------------------
--spec content_type_html() -> nitrogen_element().
+-spec content_type_html() ->list( nitrogen_element()).
 
 content_type_html() ->
     CharSet = 

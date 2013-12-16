@@ -36,7 +36,7 @@
 		   {ok, ChildPid::pid()} |
 		   {error, Reason::term()}.
 
-start(Port) ->
+start(Port) when is_integer(Port) ->
     ct:pal("rfzone_http_server: start: port ~p",[Port]),
     exo_http_server:start(Port, [{request_handler, {?MODULE, handle_body}}]).
 

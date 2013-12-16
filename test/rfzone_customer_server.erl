@@ -110,7 +110,6 @@ init(Args) ->
     ?dbg("init: args ~p", [Args]),
     HttpPort = proplists:get_value(http_port, Args, 8980),
     {ok, Http} = rfzone_http_server:start(HttpPort),
-    exodm_json_api:set_exodmrc_dir(code:lib_dir(rfzone)), %% ??
     {ok, #ctx {http = Http}}.
 
 %%--------------------------------------------------------------------

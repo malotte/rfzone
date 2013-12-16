@@ -25,6 +25,7 @@
 -ifndef(RFZONE_TEST_HRL).
 -define(RFZONE_TEST_HRL, true).
 
+-define(EXO_ADMIN, "exodm-admin").
 -define(RF_ACCOUNT, "rfzone").
 -define(RF_ADMIN, "rfzone-admin").
 -define(RF_PASS, "rfzonepassw").
@@ -39,6 +40,7 @@
 -define(RF_DEVICE_NR2, "46706652043").
 -define(RF_SERV_KEY, "1").
 -define(RF_DEV_KEY, "99").
+-define(URL, "https://localhost:8000/exodm/rpc").
 
 -define(v(Pat, Expr), {Pat,Pat} = {Pat, Expr}).
 

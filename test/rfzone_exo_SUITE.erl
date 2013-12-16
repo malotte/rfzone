@@ -184,12 +184,33 @@ install_exodm() ->
     end,
     NodesRes = os:cmd("cd " ++ ExodmDir ++ "; ls nodes"),
     true = lists:member(<<"dm">>, re:split(NodesRes, "\n", [])),
-    timer:sleep(3000), %% Wait for node to get up
+    node_check(),
 
     ok.
+node_check() ->
+    %% Check that the node is running
+    Dm = dm_node(),
+    node_check(10, Dm).
+
+node_check(0, Dm) ->
+    ct:fail("Exodm not running on node ~p, failing.", [Dm]);
+node_check(N, Dm) ->
+    case ct_rpc:call(Dm, erlang, node, []) of
+	{badrpc, nodedown} ->
+	    %% Bad :-(
+	    node_recheck(N-1, Dm);
+	Dm ->
+	    case ct_rpc:call(Dm, exodm, await_exodm, []) of
+		error ->
+		    %% Still bad :-(
+		    node_recheck(N-1, Dm);
+		ok ->
+		    %% Good :-)
+		    ct:pal("Node ~p running.", [Dm])
+	    end
+    end.
 
 configure_exodm(Config) ->
-    exodm_json_api:set_exodmrc_dir(?config(data_dir, Config)),
     Yang = filename:join(?config(data_dir, Config),?RF_YANG),
     case filelib:is_regular(Yang) of
 	true -> ok;

@@ -36,32 +36,37 @@ configure_rfzone_account(File, Url) ->
       exodm_json_api:create_account(?RF_ACCOUNT, 
 				    "tony@rogvall.se", 
 				    ?RF_PASS, 
-				    "RfZone"), 
+				    "RfZone", 
+				    opts(root)), 
       "ok"),
     
     exodm_json_api:parse_result(
       exodm_json_api:create_yang_module(?RF_ACCOUNT, 
 					?RF_YANG,
 					"user",
-					File),
+					File, 
+					opts(rf)),
       "ok"),
     
     exodm_json_api:parse_result(
       exodm_json_api:create_config_set(?RF_ACCOUNT, 
 				       ?RF_SET,
 				       ?RF_YANG, 
-				       Url),
+				       Url, 
+				       opts(rf)),
       "ok"),
     exodm_json_api:parse_result(
       exodm_json_api:create_device_type(?RF_ACCOUNT, 
 					?RF_TYPE,
-					?RF_PROT),
+					?RF_PROT, 
+					opts(rf)),
       "ok"),
     
     exodm_json_api:parse_result(
       exodm_json_api:create_device_group(?RF_ACCOUNT, 
 					 ?RF_GROUP,
-					 Url),
+					 Url, 
+					 opts(rf)),
       "ok"),
     
     configure_device(?RF_DEVICE1, ?RF_DEVICE_NR1),
@@ -74,18 +79,31 @@ configure_device(Device, Number) ->
 				   ?RF_TYPE, 
 				   ?RF_SERV_KEY, 
 				   ?RF_DEV_KEY,
-				   Number),
+				   Number, 
+				   opts(rf)),
        "ok"),
      exodm_json_api:parse_result(
       exodm_json_api:add_config_set_members(?RF_ACCOUNT, 
 					    [?RF_SET], 
-					    [Device]),
+					    [Device], 
+					    opts(rf)),
        "ok"),
      exodm_json_api:parse_result(
       exodm_json_api:add_device_group_members(?RF_ACCOUNT, 
 					      [?RF_GROUP],
-					      [Device]),
+					      [Device], 
+					      opts(rf)),
       "ok").
+
+opts(root) ->
+    [{url, ?URL},
+     {user, ?EXO_ADMIN},
+     {password, erlang:get_cookie()}];
+opts(rf) ->
+    [{url, ?URL},
+     {user, ?RF_ADMIN},
+     {password, ?RF_PASS}].
+    
 
 json_notification(Request) ->
     rfzone_customer_server:receive_notification(Request, 3000).
