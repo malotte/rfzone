@@ -982,7 +982,7 @@ handle_piface_event(Ctx=#ctx {piface_mask = OldMask}) ->
 	    %% Not possible to get value
 	    ?warning("handle_piface_event: read input failed, reason, ~p.", 
 		     [_Reason]),
-	    Ctx;
+	    Ctx
     end.
 
 piface_pin_event(0, _Pin, _NewMask, Ctx) ->
