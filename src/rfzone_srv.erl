@@ -750,17 +750,9 @@ handle_info({analog_output, Rid, Rchan, Value},
 	    Ctx=#ctx {node_id = Nid, items = OldItems}) ->
     %% Buffered analog input
     ?dbg("handle_info: analog_output.",[]),
-    case take_item(Rid, Rchan, OldItems) of
-	false ->
-	    ?dbg("handle_info: analog_output, item ~p, ~p not found", 
-		 [Rid, Rchan]),
-	    {noreply,Ctx};
-	{value,Item,OtherItems} ->
-	    ?dbg("analog_output: received buffered call for ~.16#, ~p, ~p.",
-		 [Rid, Rchan, Value]),
-	    NewItems = exec_analog_output(Item,Nid,OtherItems,Value),
-	    {noreply, Ctx#ctx { items = NewItems }}
-    end;
+    %% Items = exec_all_analog_output(Rid,Nid,Rchan,Value,OldItems),
+    Items = exec_first_analog_output(Rid,Nid,Rchan,Value,OldItems),
+    {noreply, Ctx#ctx { items = Items }};
 
 handle_info({tellstick_event,_Ref,EventData}, Ctx) ->
     ?dbg("handle_info: tellstick event ~p\n.",[EventData]),
@@ -904,27 +896,11 @@ handle_notify({RemoteId, _Index = ?MSG_POWER_OFF, _SubInd, _Value}, Ctx) ->
 handle_notify({RemoteId, Index, SubInd, Value}, Ctx) ->
     ?dbg("handle_notify ~.16#: ID=~7.16.0#:~w, Value=~w", 
 	      [RemoteId, Index, SubInd, Value]),
-    case take_item(RemoteId, SubInd, Ctx#ctx.items) of
-	false ->
-	    ?dbg("take_item = false", []),
-	    {noreply,Ctx};
-	{value,I,Is} ->
-	    case Index of
-		?MSG_DIGITAL ->
-		    Items = digital_output(I,Ctx#ctx.node_id,Is,Value),
-		    {noreply, Ctx#ctx { items=Items }};
-		?MSG_ANALOG ->
-		    Items = analog_output(I,Ctx#ctx.node_id,Is,Value),
-		    {noreply, Ctx#ctx { items=Items }};
-		?MSG_ENCODER ->
-		    Items = encoder_output(I,Ctx#ctx.node_id,Is,Value),
-		    {noreply, Ctx#ctx { items=Items }};
-		_ ->
-		    ?dbg("handle_notify ~.16#: ID=~7.16.0#:~w not handled.", 
-			 [RemoteId, Index, SubInd]),
-		    {noreply,Ctx}
-	    end
-    end.
+%%    Items = exec_all_items(RemoteId,Ctx#ctx.node_id,Index,SubInd,Value,
+%%			   Ctx#ctx.items),
+    Items = exec_first_item(RemoteId,Ctx#ctx.node_id,Index,SubInd,Value,
+			    Ctx#ctx.items),
+    {noreply, Ctx#ctx { items=Items }}.
     
 %%--------------------------------------------------------------------
 %% Input - receiving device signals
@@ -1005,33 +981,88 @@ piface_pin_event(ChangeMask, Pin, NewMask, Ctx) ->
 %%--------------------------------------------------------------------
 %% Digital output
 %%--------------------------------------------------------------------
-digital_output(I, Nid, Is, Value) ->
+
+exec_all_items(RId,Nid,Index,SubInd,Value,Is) ->
+    exec_all_items_(RId,Nid,Index,SubInd,Value,Is,[]).
+
+exec_all_items_(RId,Nid,Index,SubInd,Value,Is,Acc) ->
+    case take_item(RId, SubInd, Is) of
+	false ->
+	    Is ++ Acc;
+	{value,I,Is1} ->
+	    case Index of
+		?MSG_DIGITAL ->
+		    I1 = digital_output_(I,Nid,Value),
+		    exec_all_items_(RId,Nid,Index,SubInd,Value,Is1,[I1|Acc]);
+		?MSG_ANALOG ->
+		    I1 = analog_output_(I,Nid,Value),
+		    exec_all_items_(RId,Nid,Index,SubInd,Value,Is1,[I1|Acc]);
+		?MSG_ENCODER ->
+		    I1 = encoder_output_(I,Nid,Value),
+		    exec_all_items_(RId,Nid,Index,SubInd,Value,Is1,[I1|Acc]);
+		_ ->
+		    ?dbg("handle_notify ~.16#: ID=~7.16.0#:~w not handled.", 
+			 [RId, Index, SubInd]),
+		    exec_all_items_(RId,Nid,Index,SubInd,Value,Is1,[I|Acc])
+	    end
+    end.
+
+exec_first_item(RId,Nid,Index,SubInd,Value,Is) ->
+    case take_item(RId, SubInd, Is) of
+	false ->
+	    ?dbg("exec_first_item: item ~p, ~p not found", 
+		 [RId, SubInd]),
+	    Is;
+	{value,I,Is1} ->
+	    case Index of
+		?MSG_DIGITAL ->
+		    I1 = digital_output_(I,Nid,Value),
+		    [I1|Is1];
+		?MSG_ANALOG ->
+		    I1 = analog_output_(I,Nid,Value),
+		    [I1|Is1];
+		?MSG_ENCODER ->
+		    I1 = encoder_output_(I,Nid,Value),
+		    [I1|Is1];
+		_ ->
+		    ?dbg("exec_first_item ~.16#: ID=~7.16.0#:~w not handled.", 
+			 [RId, Index, SubInd]),
+		    Is
+	    end
+    end.
+    
+
+digital_output_(I, Nid, Value0) ->
+    Invert     = proplists:get_bool(invert, I#item.flags),
     Digital    = proplists:get_bool(digital, I#item.flags),
     SpringBack = proplists:get_bool(springback, I#item.flags),
+    Value      = if Digital,Invert -> 1-Value0;
+		    true -> Value0
+		 end,
     if Digital, SpringBack, Value =:= 1 ->
 	    Active = not I#item.active,
-	    exec_digital_output(I, Nid, Is, Active);
+	    exec_digital_output(I, Nid, Active);
        Digital, not SpringBack ->
 	    Active = Value =:= 1,
 	    if I#item.active =:= Active -> 
 		    ?dbg("digital_output: no change, no action.", []),
-		    [I | Is];
+		    I;
 	       true ->
-		    exec_digital_output(I, Nid, Is, Active)
+		    exec_digital_output(I, Nid, Active)
 	    end;
        Digital ->
 	    ?dbg("digital_output: no action.", []),
 	    ?dbg("item = ~s\n", [fmt_item(I)]),
-	    [I | Is];
+	    I;
        true ->
 	    ?dbg("digital_output: not digital item.", []),
-	    [I | Is]
+	    I
     end.
 
-exec_digital_output(I, _Nid, Is, true) when I#item.inhibit =/= undefined ->
+exec_digital_output(I, _Nid, true) when I#item.inhibit =/= undefined ->
     ?dbg("digital_output: inhibited.",[]),
-    [I|Is];   %% not allowed to turn on yet
-exec_digital_output(I, Nid, Is, Active) -> 
+    I;   %% not allowed to turn on yet
+exec_digital_output(I, Nid, Active) -> 
     ?dbg("digital_output: executing.",[]),
     ?dbg("item = ~s\n", [fmt_item(I)]),
     case run(I,Active,[]) of
@@ -1040,23 +1071,23 @@ exec_digital_output(I, Nid, Is, Active) ->
 	    notify(Nid, pdo1_tx, ?MSG_OUTPUT_ACTIVE, I#item.rchan, AValue),
 	    case proplists:get_value(inhibit, I#item.flags, 0) of
 		0 ->
-		    [I#item { active=Active} | Is];
+		    I#item { active=Active};
 		T when Active ->
 		    TRef = erlang:start_timer(T, self(), inhibit),
-		    [I#item { active=Active, inhibit=TRef} | Is];
+		    I#item { active=Active, inhibit=TRef};
 		_ ->
-		    [I#item { active=Active} | Is]
+		    I#item { active=Active}
 	    end;
 	_Error ->
 	    ?dbg("digital_output: run failed.",[]),
-	    [I | Is]
+	    I
     end.
 
 %%--------------------------------------------------------------------
 %% Analog output
 %%--------------------------------------------------------------------
-analog_output(I=#item {rid = Rid, rchan = Rchan, timer = Timer, flags = Flags}, 
-	     _Nid, Is, Value) ->
+analog_output_(I=#item {rid=Rid, rchan=Rchan, timer=Timer, flags=Flags}, 
+	       _Nid, Value) ->
     Analog = proplists:get_bool(analog, Flags),
     if Analog ->
 	    stop_timer(Timer),
@@ -1065,15 +1096,39 @@ analog_output(I=#item {rid = Rid, rchan = Rchan, timer = Timer, flags = Flags},
 	    Tref = 
 		erlang:send_after(100, self(), 
 				  {analog_output, Rid, Rchan, Value}),
-	    [I#item {timer = Tref} | Is];
+	    I#item {timer = Tref};
        true ->
 	    ?dbg("analog_output: not analog item ~p, ~p, ignored.",
 		 [Rid, Rchan]),
-	    [I | Is]
+	    I
+    end.
+
+exec_first_analog_output(Rid, Nid, Rchan, Value, Is) ->
+    case take_item(Rid, Rchan, Is) of
+	false ->
+	    ?dbg("exec_first_analog_output: item ~p, ~p not found", 
+		 [Rid, Rchan]),
+	    Is;
+	{value,I,Is1} ->
+	    I1 = exec_analog_output(I,Nid,Value),
+	    [I1|Is1]
+    end.
+
+%% match all analog items
+exec_all_analog_output(Rid, Nid, Rchan, Value, Items) ->
+    exec_all_analog_output_(Rid, Nid, Rchan, Value, Items, []).
+
+exec_all_analog_output_(Rid, Nid, Rchan, Value, Items, Acc)->
+    case take_item(Rid, Rchan, Items) of
+	false ->
+	    Items ++ Acc;
+	{value,Item,Items1} ->
+	    Item1 = exec_analog_output(Item,Nid,Value),
+	    exec_all_analog_output_(Rid, Nid, Rchan,Value,Items1,[Item1|Acc])
     end.
 
 exec_analog_output(I=#item {rchan = Rchan, flags = Flags, active = Active}, 
-		  Nid, Is, Value) ->
+		   Nid, Value) ->
     ?dbg("exec_analog_output: updating item:.",[]),
     ?dbg("item = ~s\n", [fmt_item(I)]),
 
@@ -1103,19 +1158,18 @@ exec_analog_output(I=#item {rchan = Rchan, flags = Flags, active = Active},
 		    do_nothing
 	    end,
 	    notify(Nid, pdo1_tx, ?MSG_OUTPUT_VALUE,Rchan, RValue),
-	    NewI = I#item {level=RValue, timer = undefined, 
-			    active = ((RValue =/= 0) andalso not Digital)}, 
-	    [NewI | Is];
+	    I#item {level=RValue, timer = undefined, 
+		    active = ((RValue =/= 0) andalso not Digital)};
 	_Error ->
-	    [I | Is]
+	    I
     end.
 
 %%--------------------------------------------------------------------
 %% Encoder output
 %%--------------------------------------------------------------------
-encoder_output(_Nid, I, Is, _Value) ->
+encoder_output_(_Nid, I, _Value) ->
     ?dbg("encoder_output: Not implemented yet.",[]),
-    [I|Is].
+    I.
 
 %%--------------------------------------------------------------------
 %% Execution of both control and event signalling
@@ -1131,7 +1185,7 @@ run(_I=#item {type = email, flags = Flags}, true, _Style) ->
     %% fixme: setup callback and log failed attempts
     Flags1 = lists:foldl(fun(F,Fs) -> proplists:delete(F, Fs) end, 
 			 Flags,
-			 [digital,springback,inhibit,
+			 [digital,invert,springback,inhibit,
 			  sender,recipients,
 			  from,to,subject,body
 			 ]),
@@ -1764,6 +1818,8 @@ verify_sms_option(inhibit,Value) ->
     is_inhibit_value(Value);
 verify_sms_option(digital,Value) ->
     is_boolean(Value);
+verify_sms_option(invert,Value) ->
+    is_boolean(Value);
 verify_sms_option(springback,Value) ->
     is_boolean(Value);
 verify_sms_option(body,Value) ->
@@ -1783,6 +1839,7 @@ verify_sms_option(K,_V) ->
 
 verify_sms_option(digital) -> true;
 verify_sms_option(springback) -> true;
+verify_sms_option(invert) -> true;
 verify_sms_option(_) -> unknown.
 
 
@@ -1832,6 +1889,8 @@ verify_mail_option(digital,Value) ->
     is_boolean(Value);
 verify_mail_option(springback,Value) ->
     is_boolean(Value);
+verify_mail_option(invert,Value) ->
+    is_boolean(Value);
 verify_mail_option(apps,AppList) ->
     verify_apps_started(AppList);
 verify_mail_option(_,_) ->
@@ -1839,6 +1898,7 @@ verify_mail_option(_,_) ->
 
 verify_mail_option(digital) -> true;
 verify_mail_option(springback) -> true;
+verify_mail_option(invert) -> true;
 verify_mail_option(_) -> unknown.
 
 
@@ -2072,6 +2132,9 @@ verify_flags(Type, [digital | Flags], I) ->
     %% Always OK?
     verify_flags(Type, Flags, I);
 verify_flags(Type, [springback | Flags], I) ->
+    %% Always OK?
+    verify_flags(Type, Flags, I);
+verify_flags(Type, [invert | Flags], I) ->
     %% Always OK?
     verify_flags(Type, Flags, I);
 verify_flags(Type, [analog | Flags], I) 
