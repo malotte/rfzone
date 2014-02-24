@@ -2060,12 +2060,12 @@ verify_flags(Type, [{apps, AList} | Flags], I) ->
 	true -> verify_flags(Type, Flags, I);
 	false -> {error, needed_app_not_started}
     end;
-verify_flags(Type, [{args, ArgList} | Flags], I) 
+verify_flags(Type, [{args, _ArgList} | Flags], I) 
   when Type == exodm;
        Type == apply ->
     %% Check args ??
     verify_flags(Type, Flags, I);
-verify_flags(apply = Type, [{output, OutPut} | Flags], I) ->
+verify_flags(apply = Type, [{output, _OutPut} | Flags], I) ->
     %% Check output ??
     verify_flags(Type, Flags, I);
 verify_flags(Type, [digital | Flags], I) ->
