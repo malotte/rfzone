@@ -1,3 +1,4 @@
+%%% coding: latin-1
 %%%---- BEGIN COPYRIGHT -------------------------------------------------------
 %%%
 %%% Copyright (C) 2007 - 2013, Rogvall Invest AB, <tony@rogvall.se>
@@ -24,11 +25,6 @@
 %%%-------------------------------------------------------------------
 -ifndef(RFZONE_HRL).
 -define(RFZONE_HRL, true).
-
-%% Switching to lager (ale)
--define(dbg(Format, Args),
- 	lager:debug("~s(~p): " ++ Format, 
-		    [?MODULE, self() | Args])).
 
 %% Convenience defines (also in canopen.hrl)
 -ifndef(ee).

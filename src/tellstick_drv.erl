@@ -1,3 +1,4 @@
+%%% coding: latin-1
 %%%---- BEGIN COPYRIGHT --------------------------------------------------------
 %%%
 %%% Copyright (C) 2007 - 2012, Rogvall Invest AB, <tony@rogvall.se>
@@ -28,7 +29,6 @@
 
 -behaviour(gen_server).
 
--include_lib("lager/include/log.hrl").
 -include("rfzone.hrl").
 
 %% API
@@ -136,7 +136,7 @@
 		   {error, Error::term()}.
 
 start_link(Opts) ->
-    lager:info("~p: start_link: args = ~p\n", [?MODULE, Opts]),
+    lager:info("args = ~p\n", [Opts]),
     gen_server:start_link({local,?SERVER}, ?MODULE, Opts, []).
 
 %%--------------------------------------------------------------------
@@ -355,7 +355,7 @@ send_pulses(PulseData) ->
 		  {stop, Reason::term()}.
 
 init(Opts) ->
-    lager:info("~p: init: args = ~p,\n pid = ~p\n", [?MODULE, Opts, self()]),
+    lager:info("args = ~p,\n pid = ~p\n", [Opts, self()]),
     {Device,Variant} = 
 	case proplists:lookup(device, Opts) of
 	    none ->
@@ -380,7 +380,7 @@ init(Opts) ->
     end.
 	    
 open(Ctx=#ctx {device = ""}) ->
-    ?dbg("TELLSTICK open: simulated\n", []),
+    lager:debug("TELLSTICK open: simulated\n", []),
     {ok, Ctx#ctx { uart=simulated, version="0" }};
 
 open(Ctx=#ctx {device = DeviceName, variant=Variant,
@@ -393,30 +393,29 @@ open(Ctx=#ctx {device = DeviceName, variant=Variant,
 	       {csize,8},{parity,none},{stopb,1}],
     case uart:open(DeviceName,Options) of
 	{ok,U} ->
-	    ?dbg("TELLSTICK open: ~s@~w -> ~p", [DeviceName,Speed,U]),
+	    lager:debug("TELLSTICK open: ~s@~w -> ~p", [DeviceName,Speed,U]),
 	    uart:send(U, "V+"), %% answer is picked in handle_info
 	    {ok, Ctx#ctx { uart=U }};
 	{error, E} when E == eaccess;
 			E == enoent ->
 	    if Reopen_ival == infinity ->
-		    ?dbg("open: Driver not started, reason = ~p.\n", [E]),
+		    lager:error("Driver not started, reason = ~p.\n", [E]),
 		    {error, E};
 	       true ->
-		    ?dbg("open: uart could not be opened, will try again"
-				" in ~p millisecs.\n", [Reopen_ival]),
+		    lager:warning("uart could not be opened, will try again"
+				  " in ~p millisecs.\n", [Reopen_ival]),
 		    Reopen_timer = erlang:start_timer(Reopen_ival,
 						      self(), reopen),
 		    {ok, Ctx#ctx { reopen_timer = Reopen_timer }}
 	    end;
 	    
 	Error ->
-	    ?dbg("open: Driver not started, reason = ~p.\n", 
-		 [Error]),
+	    lager:error("Driver not started, reason = ~p.\n",  [Error]),
 	    Error
     end.
 
 close(Ctx=#ctx {uart = U}) when is_port(U) ->
-    ?dbg("TELLSTICK close: ~p", [U]),
+    lager:debug("TELLSTICK close: ~p", [U]),
     uart:close(U),
     {ok, Ctx#ctx { uart=undefined }};
 close(Ctx) ->
@@ -463,7 +462,7 @@ handle_call(version, _From, Ctx) ->
 handle_call(Call,From,Ctx=#ctx {client = Client}) 
   when Client =/= undefined andalso Call =/= stop ->
     %% Driver is busy ..
-    ?dbg("handle_call: Driver busy, store call ~p", [Call]),
+    lager:debug("Driver busy, store call ~p", [Call]),
     %% set timer already here? probably!
     Q = queue:in({call,Call,From}, Ctx#ctx.queue),
     {noreply, Ctx#ctx { queue = Q }};
@@ -504,19 +503,18 @@ command(F, Args, Ctx=#ctx { client = _Client}) ->
 command_pulse_data(PulseData, Ctx=#ctx { uart=U }) when U =/= undefined ->
     case send_pulses_(U, PulseData) of
 	{ok,Command1} ->
-	    ?dbg("command: sent ~p, client ~p", 
-			[Command1,Ctx#ctx.client]),
+	    lager:debug("sent ~p, client ~p", [Command1,Ctx#ctx.client]),
 	    %% Wait for confirmation
 	    TRef = erlang:start_timer(3000, self(), reply),
 	    {noreply,Ctx#ctx {command = Command1, reply_timer = TRef}};
 	{simulated, ok} ->
 	    {reply, ok, Ctx};
 	Other ->
-	    ?dbg("command: send failed, reason ~p", [Other]),
+	    lager:error("send failed, reason ~p", [Other]),
 	    {reply, Other, Ctx}
     end;
 command_pulse_data(_PulseData, Ctx) ->
-    lager:info("~p: No port defined yet.\n", [?MODULE]),
+    lager:error("No port defined yet.\n", []),
     {reply, {error,no_port}, Ctx}.
     
 
@@ -532,21 +530,21 @@ command_pulse_data(_PulseData, Ctx) ->
 			 {stop, Reason::term(), Ctx::#ctx{}}.
 
 handle_cast({setopt, {Option, Value}}, Ctx=#ctx { uart = U}) ->
-    ?dbg("handle_cast: setopt ~p = ~p", [Option, Value]),
+    lager:debug("setopt ~p = ~p", [Option, Value]),
     uart:setopt(U, Option, Value),
     {noreply, Ctx};
 handle_cast(Cast, Ctx=#ctx {uart = U, client=Client})
   when U =/= undefined, Client =/= undefined ->
-    ?dbg("handle_cast: Driver busy, store cast ~p", [Cast]),
+    lager:debug("Driver busy, store cast ~p", [Cast]),
     Q = queue:in({cast,Cast}, Ctx#ctx.queue),
     {noreply, Ctx#ctx { queue = Q }};
 handle_cast({command, Command}, Ctx=#ctx {uart = U}) ->
-    ?dbg("handle_cast: command ~p", [Command]),
+    lager:debug("command ~p", [Command]),
     _Reply = uart:send(U, Command),
-    ?dbg("handle_cast: command reply ~p", [_Reply]),
+    lager:debug("command reply ~p", [_Reply]),
     {noreply, Ctx};
 handle_cast(_Msg, Ctx) ->
-    ?dbg("handle_cast: Unknown message ~p", [_Msg]),
+    lager:debug("Unknown message ~p", [_Msg]),
     {noreply, Ctx}.
 
 %%--------------------------------------------------------------------
@@ -570,13 +568,13 @@ handle_cast(_Msg, Ctx) ->
 
 handle_info({timeout,TRef,reply}, 
 	    Ctx=#ctx {client=Client, reply_timer=TRef}) ->
-    ?dbg("handle_info: timeout waiting for port", []),
+    lager:debug("timeout waiting for port", []),
     gen_server:reply(Client, {error, port_timeout}),
     Ctx1 = Ctx#ctx { reply_timer=undefined, client = undefined},
     next_command(Ctx1);
 
 handle_info({uart,U,Data},  Ctx) when U =:= Ctx#ctx.uart ->
-    ?dbg("handle_info: port data ~p", [Data]),
+    lager:debug("port data ~p", [Data]),
     case trim(Data) of
 	[$+,CmdChar|_CmdReply] when Ctx#ctx.client =/= undefined, 
 				   CmdChar =:= hd(Ctx#ctx.command) ->
@@ -591,7 +589,7 @@ handle_info({uart,U,Data},  Ctx) when U =:= Ctx#ctx.uart ->
 	    Ctx1 = event_notify(EventData, Ctx),
 	    {noreply, Ctx1};
 	_ ->
-	    ?dbg("handle_info: reply ~p", [Data]),
+	    lager:debug("reply ~p", [Data]),
 	    {noreply, Ctx}
     end;
 handle_info({uart_error,U,Reason}, Ctx) when U =:= Ctx#ctx.uart ->
@@ -618,12 +616,11 @@ handle_info({timeout,Ref,reopen}, Ctx) when Ctx#ctx.reopen_timer =:= Ref ->
     end;
 
 handle_info({'DOWN',Ref,process,_Pid,_Reason},Ctx) ->
-    ?dbg("handle_info: subscriber ~p terminated: ~p", 
-	 [_Pid, _Reason]),
+    lager:debug("subscriber ~p terminated: ~p", [_Pid, _Reason]),
     Ctx1 = remove_subscription(Ref,Ctx),
     {noreply, Ctx1};
 handle_info(_Info, Ctx) ->
-    ?dbg("handle_info: Unknown info ~p", [_Info]),
+    lager:debug("Unknown info ~p", [_Info]),
     {noreply, Ctx}.
 
 %%--------------------------------------------------------------------
@@ -961,7 +958,7 @@ reverse_bits_(Bits, I, RBits) ->
 
 
 send_pulses_(simulated, _Data) ->
-    ?dbg("send_command: Sending data =~p\n", [_Data]),
+    lager:debug("Sending data =~p\n", [_Data]),
     {simulated, ok};
 send_pulses_(U, Data) ->
     Data1 = ascii_data(Data),
@@ -1010,7 +1007,7 @@ xcommand([],T0,T1,T2,T3,Bits) ->
     U1 = if T1 =:= 0 -> 1; true -> T1 end,
     U2 = if T2 =:= 0 -> 1; true -> T2 end,
     U3 = if T3 =:= 0 -> 1; true -> T3 end,
-    ?dbg("xcommand: T0=~w,T=~w,T2=~w,T3=~w,Np=~w\n", [U0,U1,U2,U3,Np]),
+    lager:debug("T0=~w,T=~w,T2=~w,T3=~w,Np=~w\n", [U0,U1,U2,U3,Np]),
     [U0,U1,U2,U3,Np | bitstring_to_list(<<Bits/bits, 0:R>>)].
 
 %%

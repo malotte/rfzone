@@ -28,7 +28,6 @@
 
 -behaviour(application).
 
--include_lib("lager/include/log.hrl").
 -include("rfzone.hrl").
 
 %% Application API
@@ -118,10 +117,10 @@ start_host_demo() ->
 start_demo_support() ->
     Apps1 = [gpio, spi, uart, piface],
     start_em(Apps1),
-    ?debug("Started support apps ~p", [Apps1]),
+    lager:debug("Started support apps ~p", [Apps1]),
     Apps2 = [gen_smtp, gsms],
     start_em(Apps2),
-    ?debug("Started support apps ~p", [Apps2]),
+    lager:debug("Started support apps ~p", [Apps2]),
     ok.    
 
 %% @private

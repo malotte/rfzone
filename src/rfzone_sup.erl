@@ -1,3 +1,4 @@
+%%% coding: latin-1
 %%%---- BEGIN COPYRIGHT --------------------------------------------------------
 %%%
 %%% Copyright (C) 2007 - 2012, Rogvall Invest AB, <tony@rogvall.se>
@@ -33,8 +34,6 @@
 %% Supervisor callbacks
 -export([init/1]).
 
--include_lib("lager/include/log.hrl").
-
 %% ===================================================================
 %% API functions
 %% ===================================================================
@@ -52,7 +51,7 @@
 			{error, Error::term()}.
 
 start_link(Args) ->
-    lager:info("start_link: args = ~p\n", [Args]),
+    lager:info("args = ~p\n", [Args]),
     case supervisor:start_link({local, ?MODULE}, ?MODULE, Args) of
 	{ok, Pid} ->
 	    {ok, Pid, {normal, Args}};
@@ -78,11 +77,11 @@ stop(_StartArgs) ->
 %% ===================================================================
 %% @private
 init(TArgs) ->
-    lager:info("init: args = ~p,\n pid = ~p\n", [TArgs, self()]),
+    lager:debug("args = ~p,\n pid = ~p\n", [TArgs, self()]),
     I = rfzone_srv,
     Opts = proplists:get_value(options, TArgs, []),
     Rfzone = {I, {I, start_link, [Opts]}, permanent, 5000, worker, [I]},
  
-    lager:info("about to start ~p\n", [Rfzone]),
+    lager:debug("about to start ~p\n", [Rfzone]),
     {ok, { {one_for_one, 0, 300}, [Rfzone]} }.
 

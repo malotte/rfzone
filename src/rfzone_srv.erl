@@ -1,3 +1,4 @@
+%%% coding: latin-1
 %%%---- BEGIN COPYRIGHT --------------------------------------------------------
 %%%
 %%% Copyright (C) 2007 - 2012, Rogvall Invest AB, <tony@rogvall.se>
@@ -32,7 +33,6 @@
 -include_lib("can/include/can.hrl").
 -include_lib("canopen/include/canopen.hrl").
 -include_lib("canopen/include/co_app.hrl").
--include_lib("lager/include/log.hrl").
 -include("rfzone.hrl").
 
 %% API
@@ -171,7 +171,7 @@
 			{error, Error::term()}.
 
 start_link(Opts) ->
-    lager:info("~p: start_link: args = ~p\n", [?MODULE, Opts]),
+    lager:info("args = ~p\n", [Opts]),
     F =	case proplists:get_value(linked,Opts,true) of
 	    true -> start_link;
 	    false -> start
@@ -407,22 +407,22 @@ dump() ->
 		  {stop, Reason::term()}.
 
 init(Args) ->
-    lager:info("~p: init: args = ~p,\n pid = ~p\n", [?MODULE, Args, self()]),
+    lager:info("args = ~p,\n pid = ~p\n", [Args, self()]),
 
     %% if on_host is true no io-pins are accessible
     case application:get_env(rfzone, on_host) of
 	{ok, true} ->
-	    ?dbg("Running on host", []),
+	    lager:debug("Running on host", []),
 	    put(on_host, true);
 	_NotTrue ->
-	    ?dbg("Running on device", []),
+	    lager:debug("Running on device", []),
 	    put(on_host, false)
     end,
     
     %% CANOpen node mandatory
     case proplists:get_value(co_node, Args) of
 	undefined ->
-	    ?dbg("init: No CANOpen node given.", []),
+	    lager:error("No CANOpen node given.", []),
 	    {stop, no_co_node};
 	CoNode = {name, _Name} ->
 	    conf(Args, CoNode);
@@ -436,7 +436,7 @@ conf(Args,CoNode) ->
     ConfFile =  full_filename(FileName),
     TOut = proplists:get_value(retry_timeout, Args, infinity),
 
-    ?dbg("init: File = ~p", [ConfFile]),
+    lager:debug("File = ~p", [ConfFile]),
 
     case load_config(ConfFile) of
 	{ok, _Conf=#conf {device = Device, items = Items, events = Events}} ->
@@ -462,7 +462,7 @@ conf(Args,CoNode) ->
 			piface_initialized = PifaceInit
 		      }};
 	Error ->
-	    ?dbg("init: Not possible to load configuration file ~p.",
+	    lager:error("Not possible to load configuration file ~p.",
 		 [ConfFile]),
 	    {stop, Error}
     end.
@@ -470,7 +470,7 @@ conf(Args,CoNode) ->
 start_device(Device, Opts) ->
     case Device of
 	{simulated, _Version} ->
-	    ?dbg("start_device: running simulated.",[]),
+	    lager:debug("running simulated.",[]),
 	    {ok, _Pid} = 
 		tellstick_drv:start_link([{device,{simulated, ?DEF_VERSION}}]);
 	Device ->
@@ -516,7 +516,7 @@ handle_call({reload, File}, _From,
 		      items = OldItems,
 		      events = OldEvents}) ->
     ConfFile = full_filename(File),
-    ?dbg("reload ~p",[ConfFile]),
+    lager:debug("reload ~p",[ConfFile]),
     case load_config(ConfFile) of
 	{ok,_Conf=#conf {device=NewDevice,items=NewItems,events=Events}} ->
 	    if NewDevice =/= OldDevice ->
@@ -539,7 +539,7 @@ handle_call({reload, File}, _From,
 	    ItemIdsToAdd = lists:usort(NewItemIds) -- lists:usort(OldItemIds),
 	    ItemIdsToRemove = lists:usort(OldItemIds) -- lists:usort(NewItemIds),
 
-	    ?dbg("\nold items = ~p\n new items ~p\n "
+	    lager:debug("\nold items = ~p\n new items ~p\n "
 		 "items to add ~p\n items to remove ~p\n",
 		 [OldItemIds, NewItemIds, ItemIdsToAdd, ItemIdsToRemove]),
 
@@ -578,7 +578,7 @@ handle_call({reload, File}, _From,
 
 handle_call({item_configuration, RemoteId, Channel} = _X, _From, 
 	    Ctx=#ctx {items = Items}) ->
-    ?dbg("handle_call: received item_configuration req ~p.",[_X]),
+    lager:debug("received item_configuration req ~p.",[_X]),
     case take_item(RemoteId, Channel, Items) of
 	false ->
 	    {reply, {error, no_such_item}, Ctx};
@@ -588,7 +588,7 @@ handle_call({item_configuration, RemoteId, Channel} = _X, _From,
 
 handle_call({configure_item, RemoteId, Channel, Config} = _X, _From, 
 	    Ctx=#ctx {items = Items}) ->
-    ?dbg("handle_call: received configure_item req ~p.",[_X]),
+    lager:debug("received configure_item req ~p.",[_X]),
     case take_item(RemoteId, Channel, Items) of
 	false ->
 	    NewItem = item(Config, #item {rid = RemoteId, rchan = Channel}),
@@ -605,12 +605,12 @@ handle_call({configure_item, RemoteId, Channel, Config} = _X, _From,
 
 handle_call(device_configuration, _From, 
 	    Ctx=#ctx {device = Device}) ->
-    ?dbg("handle_call: received device_configuration req.",[]),
+    lager:debug("received device_configuration req.",[]),
     {reply, {ok, bert_format(Device)}, Ctx};
 
 handle_call({configure_device, NewDevice} = _X, _From, 
 	    Ctx=#ctx {device = OldDevice}) ->
-    ?dbg("handle_call: received configure_device req ~p.",[_X]),
+    lager:debug("received configure_device req ~p.",[_X]),
     if NewDevice =/= OldDevice ->
 	    change_device(NewDevice, Ctx);
        true ->
@@ -648,11 +648,11 @@ handle_call(dump, _From,
     {reply, ok, Ctx};
 
 handle_call(stop, _From, Ctx) ->
-    ?dbg("stop:",[]),
+    lager:debug("stop",[]),
     {stop, normal, ok, Ctx};
 
 handle_call(_Request, _From, Ctx) ->
-    ?dbg("handle_call: unknown request ~p", [_Request]),
+    lager:debug("unknown request ~p", [_Request]),
     {reply, {error,bad_call}, Ctx}.
 
 %%--------------------------------------------------------------------
@@ -671,62 +671,62 @@ handle_call(_Request, _From, Ctx) ->
 			 {stop, Reason::term(), Ctx::#ctx{}}.
 
 handle_cast({extended_notify, _Index, Frame}, Ctx) ->
-    ?dbg("handle_cast: received notify with frame ~w.",[Frame]),
+    lager:debug("received notify with frame ~w.",[Frame]),
     %% Check index ??
     RemoteId = ?CANID_TO_COBID(Frame#can_frame.id), %% Not X format ??
     <<_F:1, _Addr:7, Ix:16/little, Si:8, Data:4/binary>> = Frame#can_frame.data,
-    ?dbg("handle_cast: index = ~.16.0#:~w, data = ~w.",[Ix, Si, Data]),
+    lager:debug("index = ~.16.0#:~w, data = ~w.",[Ix, Si, Data]),
     try co_codec:decode(Data, unsigned32) of
 	{Value, _Rest} ->
 	    handle_notify({RemoteId, Ix, Si, Value}, Ctx)
     catch
 	error:_Reason ->
-	    ?dbg("handle_cast: decode failed, reason ~p.",[_Reason]),
+	    lager:debug("decode failed, reason ~p.",[_Reason]),
 	    {noreply, Ctx}
     end;
 
 handle_cast({analog_output, RemoteId, Channel, Value} = _X, Ctx) ->
-    ?dbg("handle_cast: received analog_output ~p.",[_X]),
+    lager:debug("received analog_output ~p.",[_X]),
     handle_notify({RemoteId, ?MSG_ANALOG, Channel, Value}, Ctx);
 
 handle_cast({digital_output, RemoteId, Channel, Value} = _X, Ctx) ->
-    ?dbg("handle_cast: received digital_output ~p.",[_X]),
+    lager:debug("received digital_output ~p.",[_X]),
     handle_notify({RemoteId, ?MSG_DIGITAL, Channel, Value}, Ctx);
 
 handle_cast({action, RemoteId, Action, Channel, Value} = _X, Ctx) ->
-    ?dbg("handle_cast: received action ~p.",[_X]),
+    lager:debug("received action ~p.",[_X]),
     handle_notify({RemoteId, Action, Channel, Value}, Ctx);
 
 handle_cast({power, RemoteId, ?MSG_POWER_ON} = _X, Ctx) ->
-    ?dbg("handle_cast: received power on ~p.",[_X]),
+    lager:debug("received power on ~p.",[_X]),
     remote_power_on(RemoteId, Ctx#ctx.node_id, Ctx#ctx.items),
     {noreply, Ctx};    
 
 handle_cast({power, RemoteId, ?MSG_POWER_OFF} = _X, Ctx) ->
-    ?dbg("handle_cast: received power off ~p.",[_X]),
+    lager:debug("received power off ~p.",[_X]),
     remote_power_off(RemoteId, Ctx#ctx.node_id, Ctx#ctx.items),
     {noreply, Ctx};    
 
 handle_cast({name_change, OldName, NewName}, 
 	    Ctx=#ctx {co_node = {name, OldName}}) ->
-   ?dbg( "handle_cast: co_node name change from ~p to ~p.", 
+   lager:debug("co_node name change from ~p to ~p.", 
 	 [OldName, NewName]),
     {noreply, Ctx#ctx {co_node = {name, NewName}}};
 
 handle_cast({name_change, _OldName, _NewName}, Ctx) ->
-   ?dbg( "handle_cast: co_node name change from ~p to ~p, ignored.", 
+   lager:debug("co_node name change from ~p to ~p, ignored.", 
 	 [_OldName, _NewName]),
     {noreply, Ctx};
 
 handle_cast({nodeid_change, _TypeOfNid, _OldNid, _NewNid}, 
 	    Ctx=#ctx {co_node = CoNode}) ->
-   ?dbg( "handle_cast: co_node nodied ~p change from ~p to ~p.", 
+   lager:debug("co_node nodied ~p change from ~p to ~p.", 
 	[_TypeOfNid, _OldNid, _NewNid]),
     Nid = co_api:get_option(CoNode, id),
     {noreply, Ctx#ctx {node_id = {name, Nid}}};
 
 handle_cast(_Msg, Ctx) ->
-    ?dbg("handle_cast: unknown msg ~p", [_Msg]),
+    lager:debug("unknown msg ~p", [_Msg]),
     {noreply, Ctx}.
 
 %%--------------------------------------------------------------------
@@ -749,23 +749,23 @@ handle_cast(_Msg, Ctx) ->
 handle_info({analog_output, Rid, Rchan, Value}, 
 	    Ctx=#ctx {node_id = Nid, items = OldItems}) ->
     %% Buffered analog input
-    ?dbg("handle_info: analog_output.",[]),
+    lager:debug("analog_output.",[]),
     %% Items = exec_all_analog_output(Rid,Nid,Rchan,Value,OldItems),
     Items = exec_first_analog_output(Rid,Nid,Rchan,Value,OldItems),
     {noreply, Ctx#ctx { items = Items }};
 
 handle_info({tellstick_event,_Ref,EventData}, Ctx) ->
-    ?dbg("handle_info: tellstick event ~p\n.",[EventData]),
+    lager:debug("tellstick event ~p\n.",[EventData]),
     handle_event(EventData, dummy, Ctx),
     {noreply,Ctx};
  
 handle_info({gpio_interrupt, 0, ?PIFACE_PIN, _Value} = Event, Ctx) ->
-    ?dbg("handle_info: gpio event for piface ~p\n.",[Event]),
+    lager:debug("gpio event for piface ~p\n.",[Event]),
     NewCtx = handle_piface_event(Ctx),
     {noreply, NewCtx};
 
 handle_info({gpio_interrupt, PinReg, Pin, Value} = Event, Ctx) ->
-    ?dbg("handle_info: gpio event ~p\n.",[Event]),
+    lager:debug("gpio event ~p\n.",[Event]),
     EventData = [{protocol,gpio}, 
 		 {board, cpu}, 
 		 {pin_reg, PinReg}, 
@@ -781,12 +781,12 @@ handle_info({gsms, Ref, _Pdu}, Ctx) ->
 	    event_notify(dummy, E), %% data must be in event def
 	    {noreply, Ctx};
 	false ->
-	    ?dbg("gsms ref not found, pdu=~p\n", [_Pdu]),
+	    lager:debug("gsms ref not found, pdu=~p\n", [_Pdu]),
 	    {nreply, Ctx}
     end;
 
 handle_info({timeout,Ref,inhibit}, Ctx) ->
-    ?dbg("handle_info: inhibit timer done.", []),
+    lager:debug("inhibit timer done.", []),
     %% inhibit period is overl unlock item
     case lists:keytake(Ref, #item.inhibit, Ctx#ctx.items) of
 	{value,I,Is} ->
@@ -797,16 +797,16 @@ handle_info({timeout,Ref,inhibit}, Ctx) ->
     end;
 
 handle_info({apply_wait, AItem}, Ctx=#ctx {apply_list = AL}) ->
-    ?dbg("handle_info: apply_wait ~p.", [AItem]),
+    lager:debug("apply_wait ~p.", [AItem]),
     %% Add item to wait list
     {noreply, Ctx#ctx{apply_list = [AItem | AL]}};
 
 handle_info({apply_timeout, Pid}, Ctx=#ctx {apply_list = AL}) ->
-    ?dbg("handle_info: apply_timeout for ~p.", [Pid]),
+    lager:debug("apply_timeout for ~p.", [Pid]),
     case lists:keytake(Pid, #apply_item.pid, AL) of
 	{value,_AI=#apply_item {output = OutPut}, NewAL} ->
 	    %% Stop Pid ??
-	    ?dbg("handle_info: killing ~p.", [Pid]),
+	    lager:debug("killing ~p.", [Pid]),
 	    case erlang:is_process_alive(Pid) of
 		true -> exit(Pid, die);
 		false -> ok
@@ -815,30 +815,30 @@ handle_info({apply_timeout, Pid}, Ctx=#ctx {apply_list = AL}) ->
 	    output({error, timeout}, OutPut),
 	    {noreply, Ctx#ctx {apply_list = NewAL}};
 	false ->
-	    ?dbg("handle_info: Pid ~p not found.", [Pid]),
+	    lager:debug("Pid ~p not found.", [Pid]),
 	    {noreply, Ctx}
     end;
 
 handle_info({apply_result, Pid, Result}, Ctx=#ctx {apply_list = AL}) ->
-    ?dbg("handle_info: apply_result ~p for ~p.", [Result, Pid]),
+    lager:debug("apply_result ~p for ~p.", [Result, Pid]),
     NewAL = apply_result(Pid, Result, AL),
     {noreply, Ctx#ctx {apply_list = NewAL}};
 
 handle_info({'EXIT', _Pid, normal} = _I, Ctx) ->
-    ?dbg("handle_info: ~p, assume normal apply execution.",[_I]),
+    lager:debug("~p, assume normal apply execution.",[_I]),
     {noreply, Ctx};
  
 handle_info({'EXIT', _Pid, co_node_terminated}, Ctx) ->
-    ?dbg("handle_info: co_node terminated.",[]),
+    lager:debug("co_node terminated.",[]),
     {stop, co_node_terminated, Ctx};   
  
 handle_info({'EXIT', Pid, Reason} = _I, Ctx) ->
-    ?dbg("handle_info: ~p, assume abnormal apply execution.",[_I]),
+    lager:debug("~p, assume abnormal apply execution.",[_I]),
     self() ! {apply_result, Pid, {error, Reason}},
     {noreply, Ctx};
  
 handle_info(_Info, Ctx) ->
-    ?dbg("handle_info: unknown info ~p", [_Info]),
+    lager:debug("unknown info ~p", [_Info]),
     {noreply, Ctx}.
 
 %%--------------------------------------------------------------------
@@ -848,18 +848,18 @@ handle_info(_Info, Ctx) ->
 		       no_return().
 
 terminate(_Reason, _Ctx=#ctx {co_node = CoNode}) ->
-    ?dbg("terminate: Reason = ~p",[_Reason]),
+    lager:debug("Reason = ~p",[_Reason]),
     case co_api:alive(CoNode) of
 	true ->
 	    unsubscribe(CoNode),
-	    ?dbg("terminate: unsubscribed.",[]),
+	    lager:debug("unsubscribed.",[]),
 	    co_api:detach(CoNode);
 	false -> 
 	    do_nothing %% Not possible to detach and unsubscribe
     end,
-    ?dbg("terminate: detached.",[]),
+    lager:debug("detached.",[]),
     tellstick_drv:stop(),
-    ?dbg("terminate: driver stopped.",[]),
+    lager:debug("driver stopped.",[]),
     ok.
 
 %%--------------------------------------------------------------------
@@ -884,17 +884,17 @@ code_change(_OldVsn, Ctx, _Extra) ->
 %% Output - control devices etc
 %%--------------------------------------------------------------------
 handle_notify({RemoteId, _Index = ?MSG_POWER_ON, _SubInd, _Value}, Ctx) ->
-    ?dbg("handle_notify power on ~.16#: ID=~7.16.0#:~w, Value=~w", 
+    lager:debug("power on ~.16#: ID=~7.16.0#:~w, Value=~w", 
 	      [RemoteId, _Index, _SubInd, _Value]),
     remote_power_on(RemoteId, Ctx#ctx.node_id, Ctx#ctx.items),
     {noreply, Ctx};    
 handle_notify({RemoteId, _Index = ?MSG_POWER_OFF, _SubInd, _Value}, Ctx) ->
-    ?dbg("handle_notify power off ~.16#: ID=~7.16.0#:~w, Value=~w", 
+    lager:debug("power off ~.16#: ID=~7.16.0#:~w, Value=~w", 
 	      [RemoteId, _Index, _SubInd, _Value]),
     remote_power_off(RemoteId, Ctx#ctx.node_id, Ctx#ctx.items),
     {noreply, Ctx};    
 handle_notify({RemoteId, Index, SubInd, Value}, Ctx) ->
-    ?dbg("handle_notify ~.16#: ID=~7.16.0#:~w, Value=~w", 
+    lager:debug("~.16#: ID=~7.16.0#:~w, Value=~w", 
 	      [RemoteId, Index, SubInd, Value]),
 %%    Items = exec_all_items(RemoteId,Ctx#ctx.node_id,Index,SubInd,Value,
 %%			   Ctx#ctx.items),
@@ -908,7 +908,7 @@ handle_notify({RemoteId, Index, SubInd, Value}, Ctx) ->
 handle_event(EventData, ActualValue, Ctx) ->
     case take_event(Ctx#ctx.events, EventData) of
 	false ->
-	    ?dbg("handle_event: event ~p not found", [EventData]),
+	    lager:debug("event ~p not found", [EventData]),
 	    ok;
 	E ->
 	    %% Send the event as a CAN notification
@@ -945,24 +945,22 @@ handle_piface_event(Ctx=#ctx {piface_mask = OldMask}) ->
     case call_piface(read_input, []) of
 	OldMask ->
 	    %% No change, no action
-	    ?dbg("handle_piface_event: read input ~p, no change.", [OldMask]),
+	    lager:debug("read input ~p, no change.", [OldMask]),
 	    Ctx;
 	NewMask when is_integer(NewMask) ->
-	    ?dbg("handle_piface_event: read input new ~p, old ~p.", 
-		 [NewMask, OldMask]),
+	    lager:debug("read input new ~p, old ~p.", [NewMask, OldMask]),
 	    Changed = NewMask bxor OldMask,
 	    %% Loop through mask and see which pins that have been changed
 	    piface_pin_event(Changed, 0, NewMask, 
 			     Ctx#ctx {piface_mask = NewMask});
 	{error, _Reason} ->
 	    %% Not possible to get value
-	    ?warning("handle_piface_event: read input failed, reason, ~p.", 
-		     [_Reason]),
+	    lager:warning("read input failed, reason, ~p.", [_Reason]),
 	    Ctx
     end.
 
 piface_pin_event(0, _Pin, _NewMask, Ctx) ->
-    ?dbg("piface_pin_event: all sent.", []),
+    lager:debug("all sent.", []),
     Ctx;
 piface_pin_event(ChangeMask, Pin, NewMask, Ctx) ->
     if (ChangeMask band 1) =:= 1 ->
@@ -970,8 +968,7 @@ piface_pin_event(ChangeMask, Pin, NewMask, Ctx) ->
 	    EventData = [{protocol,gpio}, 
 			 {board, piface}, 
 			 {pin, Pin}],
-	    ?dbg("piface_pin_event: event ~p, value ~p.", 
-		 [EventData, NewValue]),
+	    lager:debug("event ~p, value ~p.", [EventData, NewValue]),
 	    handle_event(EventData, NewValue, Ctx);
        true ->
 	    do_nothing
@@ -1001,8 +998,8 @@ exec_all_items_(RId,Nid,Index,SubInd,Value,Is,Acc) ->
 		    I1 = encoder_output_(I,Nid,Value),
 		    exec_all_items_(RId,Nid,Index,SubInd,Value,Is1,[I1|Acc]);
 		_ ->
-		    ?dbg("handle_notify ~.16#: ID=~7.16.0#:~w not handled.", 
-			 [RId, Index, SubInd]),
+		    lager:debug(" ~.16#: ID=~7.16.0#:~w not handled.", 
+				[RId, Index, SubInd]),
 		    exec_all_items_(RId,Nid,Index,SubInd,Value,Is1,[I|Acc])
 	    end
     end.
@@ -1010,8 +1007,7 @@ exec_all_items_(RId,Nid,Index,SubInd,Value,Is,Acc) ->
 exec_first_item(RId,Nid,Index,SubInd,Value,Is) ->
     case take_item(RId, SubInd, Is) of
 	false ->
-	    ?dbg("exec_first_item: item ~p, ~p not found", 
-		 [RId, SubInd]),
+	    lager:debug("item ~p, ~p not found", [RId, SubInd]),
 	    Is;
 	{value,I,Is1} ->
 	    case Index of
@@ -1025,8 +1021,8 @@ exec_first_item(RId,Nid,Index,SubInd,Value,Is) ->
 		    I1 = encoder_output_(I,Nid,Value),
 		    [I1|Is1];
 		_ ->
-		    ?dbg("exec_first_item ~.16#: ID=~7.16.0#:~w not handled.", 
-			 [RId, Index, SubInd]),
+		    lager:debug("~.16#: ID=~7.16.0#:~w not handled.", 
+				[RId, Index, SubInd]),
 		    Is
 	    end
     end.
@@ -1045,26 +1041,24 @@ digital_output_(I, Nid, Value0) ->
        Digital, not SpringBack ->
 	    Active = Value =:= 1,
 	    if I#item.active =:= Active -> 
-		    ?dbg("digital_output: no change, no action.", []),
+		    lager:debug("no change, no action.", []),
 		    I;
 	       true ->
 		    exec_digital_output(I, Nid, Active)
 	    end;
        Digital ->
-	    ?dbg("digital_output: no action.", []),
-	    ?dbg("item = ~s\n", [fmt_item(I)]),
+	    lager:debug("no action. item = ~s\n", [fmt_item(I)]),
 	    I;
        true ->
-	    ?dbg("digital_output: not digital item.", []),
+	    lager:debug("not digital item.", []),
 	    I
     end.
 
 exec_digital_output(I, _Nid, true) when I#item.inhibit =/= undefined ->
-    ?dbg("digital_output: inhibited.",[]),
+    lager:debug("inhibited.",[]),
     I;   %% not allowed to turn on yet
 exec_digital_output(I, Nid, Active) -> 
-    ?dbg("digital_output: executing.",[]),
-    ?dbg("item = ~s\n", [fmt_item(I)]),
+    lager:debug("executing. item = ~s\n", [fmt_item(I)]),
     case run(I,Active,[]) of
 	ok ->
 	    AValue = if Active -> 1; true -> 0 end,
@@ -1079,7 +1073,7 @@ exec_digital_output(I, Nid, Active) ->
 		    I#item { active=Active}
 	    end;
 	_Error ->
-	    ?dbg("digital_output: run failed.",[]),
+	    lager:warning("run failed.",[]),
 	    I
     end.
 
@@ -1091,23 +1085,21 @@ analog_output_(I=#item {rid=Rid, rchan=Rchan, timer=Timer, flags=Flags},
     Analog = proplists:get_bool(analog, Flags),
     if Analog ->
 	    stop_timer(Timer),
-	    ?dbg("analog_output: buffer call for ~.16#, ~p, ~p.",
-		 [Rid, Rchan, Value]),
+	    lager:debug("buffer call for ~.16#, ~p, ~p.",
+			[Rid, Rchan, Value]),
 	    Tref = 
 		erlang:send_after(100, self(), 
 				  {analog_output, Rid, Rchan, Value}),
 	    I#item {timer = Tref};
        true ->
-	    ?dbg("analog_output: not analog item ~p, ~p, ignored.",
-		 [Rid, Rchan]),
+	    lager:debug("not analog item ~p, ~p, ignored.", [Rid, Rchan]),
 	    I
     end.
 
 exec_first_analog_output(Rid, Nid, Rchan, Value, Is) ->
     case take_item(Rid, Rchan, Is) of
 	false ->
-	    ?dbg("exec_first_analog_output: item ~p, ~p not found", 
-		 [Rid, Rchan]),
+	    lager:debug("item ~p, ~p not found", [Rid, Rchan]),
 	    Is;
 	{value,I,Is1} ->
 	    I1 = exec_analog_output(I,Nid,Value),
@@ -1129,8 +1121,7 @@ exec_all_analog_output_(Rid, Nid, Rchan, Value, Items, Acc)->
 
 exec_analog_output(I=#item {rchan = Rchan, flags = Flags, active = Active}, 
 		   Nid, Value) ->
-    ?dbg("exec_analog_output: updating item:.",[]),
-    ?dbg("item = ~s\n", [fmt_item(I)]),
+    lager:debug("updating item: ~s\n", [fmt_item(I)]),
 
     Digital = proplists:get_bool(digital, Flags),
     Min     = proplists:get_value(analog_min, Flags, 0),
@@ -1142,7 +1133,7 @@ exec_analog_output(I=#item {rchan = Rchan, flags = Flags, active = Active},
     %% scale Min-Max => 0-65535 (adjusting the slider)
     RValue = trunc(65535*((IValue-Min)/(Max-Min))),
 
-    ?dbg("analog_output: calling driver with new value ~p",[IValue]),
+    lager:debug("calling driver with new value ~p",[IValue]),
     case run(I,IValue,[{style, Style}]) of
 	ok ->
 	    %% For devices without digital control output_active
@@ -1168,20 +1159,20 @@ exec_analog_output(I=#item {rchan = Rchan, flags = Flags, active = Active},
 %% Encoder output
 %%--------------------------------------------------------------------
 encoder_output_(_Nid, I, _Value) ->
-    ?dbg("encoder_output: Not implemented yet.",[]),
+    lager:debug("Not implemented yet.",[]),
     I.
 
 %%--------------------------------------------------------------------
 %% Execution of both control and event signalling
 %%--------------------------------------------------------------------
 run(_I=#item {type = email}, false, _Style) ->
-    ?dbg("run email: state false, not sending.",[]),
+    lager:debug("run email: state false, not sending.",[]),
     ok;  %% do not send
 run(_I=#item {type = email, flags = Flags}, true, _Style) ->
     Sender = proplists:get_value(sender, Flags),
     Recipients = proplists:get_value(recipients, Flags),
     Body = proplists:get_value(body, Flags),
-    ?dbg("run email: sending to ~p",[Recipients]),
+    lager:debug("run email: sending to ~p",[Recipients]),
     %% fixme: setup callback and log failed attempts
     Flags1 = lists:foldl(fun(F,Fs) -> proplists:delete(F, Fs) end, 
 			 Flags,
@@ -1226,7 +1217,7 @@ run(_I=#item {type = email, flags = Flags}, true, _Style) ->
 	Error -> Error
     end;
 run(_I=#item {type = sms}, false, _Style) ->
-    ?dbg("run sms: state false, not sending.",[]),
+    lager:debug("run sms: state false, not sending.",[]),
     ok;  %% do not send
 run(_I=#item {type = sms, flags = Flags}, true, _Style) ->
     Body = proplists:get_value(body, Flags, ""),
@@ -1240,15 +1231,15 @@ run(_I=#item {type = sms, flags = Flags}, true, _Style) ->
 run(I=#item {type = exodm, unit = Mod, lchan = Fun, flags = Flags}, 
     Active, _Style) ->
     ExodmArgs = rpc_args(I, Active, proplists:get_value(args, Flags, []), []),
-    ?dbg("run exodm: M = ~p, F = ~p, A = ~p.",[Mod, Fun, ExodmArgs]),
+    lager:debug("run exodm: M = ~p, F = ~p, A = ~p.",[Mod, Fun, ExodmArgs]),
     case exoport:rpc(exodm_rpc, rpc, [atom_to_binary(Mod, latin1), 
 				      atom_to_binary(Fun, latin1), 
 				      ExodmArgs]) of
 	{reply,[{result,<<"accepted">>}],[]} ->
-	    ?dbg("run exodm result ok", []),
+	    lager:debug("run exodm result ok", []),
 	    ok;
 	_Other ->
-	    ?dbg("run exodm result ~p", [_Other]),
+	    lager:debug("run exodm result ~p", [_Other]),
 	    ?ee("rpc call ~p:~p(~p) failed",[Mod, Fun, ExodmArgs]),
 	    {error, rpc_call_failed}
     end;
@@ -1258,7 +1249,7 @@ run(_I=#item {type = apply, unit = Mod, lchan = Fun, flags = Flags},
     Args = apply_args(Active, proplists:get_value(args, Flags, []),[]),
     TimeOut = proplists:get_value(timeout, Flags, 5000),
     OutPut = proplists:get_value(output, Flags, []),
-    ?dbg("run apply: M = ~p, F = ~p, A = ~p.",[Mod, Fun, Args]),
+    lager:debug("run apply: M = ~p, F = ~p, A = ~p.",[Mod, Fun, Args]),
     case execute_mfa(Mod,Fun,Args) of
  	Pid when is_pid(Pid) ->
 	    TRef = erlang:start_timer(TimeOut, self(), {apply_timeout, Pid}),
@@ -1267,22 +1258,22 @@ run(_I=#item {type = apply, unit = Mod, lchan = Fun, flags = Flags},
 					       timer = TRef}},
 	    ok;
 	_Other ->
-	    ?dbg("run apply result ~p", [_Other]),
+	    lager:debug("run apply result ~p", [_Other]),
 	    ?ee("call ~p:~p(~p) failed",[Mod, Fun, Args]),
 	    {error, call_failed}
     end;
 
 run(_I=#item {type = gpio, unit = PinReg, lchan = Pin, flags = Flags}, 
     true, _Style) ->
-    ?dbg("run gpio set: PinReg = ~p, Pin = ~p, Flags = ~p.",
+    lager:debug("run gpio set: PinReg = ~p, Pin = ~p, Flags = ~p.",
 	 [PinReg, Pin, Flags]),
     case proplists:get_value(board, Flags, cpu) of
 	cpu -> 
-	    ?dbg("action: gpio, set PinReg = ~w, Pin = ~p.", 
+	    lager:debug("action: gpio, set PinReg = ~w, Pin = ~p.", 
 		 [PinReg, Pin]),
 	    call_gpio(set, [PinReg, Pin]);
 	piface ->
-	    ?dbg("action: gpio, piface set Pin = ~p.", [Pin]),
+	    lager:debug("action: gpio, piface set Pin = ~p.", [Pin]),
 	    call_piface(gpio_set, [Pin]);
 	_Other ->
 	    %% ignore
@@ -1290,15 +1281,15 @@ run(_I=#item {type = gpio, unit = PinReg, lchan = Pin, flags = Flags},
     end;
 run(_I=#item {type = gpio, unit = PinReg, lchan = Pin, flags = Flags}, 
     false, _Style) ->
-    ?dbg("run gpio clr: PinReg = ~p, Pin = ~p, Flags = ~p.",
+    lager:debug("run gpio clr: PinReg = ~p, Pin = ~p, Flags = ~p.",
 	 [PinReg, Pin, Flags]),
     case proplists:get_value(board, Flags, cpu) of
 	cpu -> 
-	    ?dbg("action: gpio, clr PinReg = ~w, Pin = ~p.", 
+	    lager:debug("action: gpio, clr PinReg = ~w, Pin = ~p.", 
 		 [PinReg, Pin]),
 	    call_gpio(clr, [PinReg, Pin]);
 	piface ->
-	    ?dbg("action: gpio, piface clr Pin = ~p.", [Pin]),
+	    lager:debug("action: gpio, piface clr Pin = ~p.", [Pin]),
 	    call_piface(gpio_clr, [Pin]);
 	_Other ->
 	    %% ignore
@@ -1306,19 +1297,19 @@ run(_I=#item {type = gpio, unit = PinReg, lchan = Pin, flags = Flags},
     end;
 run(_I=#item {type = Type, unit = Unit, lchan = Chan}, Active, Style) ->
     Args = [Unit,Chan,Active,Style],
-    ?dbg("action: Type = ~p, Args = ~w.", [Type, Args]),
+    lager:debug("action: Type = ~p, Args = ~w.", [Type, Args]),
     try apply(tellstick_drv, Type, Args) of
 	ok ->
 	    ok;
 	Error ->
-	    ?dbg("tellstick_drv: error=~p.", [Error]),
+	    lager:debug("tellstick_drv: error=~p.", [Error]),
 	    Error
     catch
 	exit:Reason ->
-	    ?dbg("tellstick_drv: crash=~p.", [Reason]),
+	    lager:debug("tellstick_drv: crash=~p.", [Reason]),
 	    {error,Reason};
 	error:Reason ->
-	    ?dbg("tellstick_drv: crash=~p.", [Reason]),
+	    lager:debug("tellstick_drv: crash=~p.", [Reason]),
 	    {error,Reason}
     end.
 
@@ -1327,17 +1318,17 @@ run(_I=#item {type = Type, unit = Unit, lchan = Chan}, Active, Style) ->
 %%--------------------------------------------------------------------
 execute_mfa(M,F,A) 
   when is_atom(M), is_atom(F), is_list(A) ->
-    ?dbg("execute: ~p:~p(~p).\n",[M,F,A]),
+    lager:debug("execute: ~p:~p(~p).\n",[M,F,A]),
     case proc_lib:spawn_link(?MODULE, execute_mfa, [M,F,A,  self()]) of
 	Pid when is_pid(Pid) -> 
-	    ?dbg("execute: spawned = ~p.",[Pid]),
+	    lager:debug("spawned = ~p.",[Pid]),
 	    Pid;
 	_Other ->
-	    ?dbg("execute: spawned failed, result ~p.",[_Other]),
+	    lager:debug("spawned failed, result ~p.",[_Other]),
 	    {error, execute_failed}
     end;
 execute_mfa(M,F,A) ->
-    ?dbg("execute: ~p:~p(~p) is illegal.",[M,F,A]),
+    lager:debug("execute: ~p:~p(~p) is illegal.",[M,F,A]),
     {error, illegal_format}.
     
 execute_mfa(M,F,A, Starter) -> 
@@ -1348,7 +1339,7 @@ execute_mfa(M,F,A, Starter) ->
 	    Starter ! {apply_result, self(), Result}
     catch
 	error:Reason ->
-	    ?dbg("execute: catch Reason = ~p",[Reason]), 
+	    lager:debug("catch Reason = ~p",[Reason]), 
 	    Starter ! {apply_result, self(), {error, Reason}}
     end.
 
@@ -1359,18 +1350,18 @@ execute_mfa(M,F,A, Starter) ->
 apply_result(Pid, Result, ApplyList) ->		        
    case lists:keytake(Pid, #apply_item.pid, ApplyList) of
 	{value, _AI=#apply_item {output = OutPut, timer = TRef}, NewAL} ->
-	   ?dbg("apply_result: ~p found in apply list.",[_AI]),
+	   lager:debug("~p found in apply list.",[_AI]),
 	    stop_timer(TRef),
 	    %% Maybe create output
 	    output(Result, OutPut),
 	    NewAL;
 	false ->
-	    ?dbg("apply_result: ~p not found.", [Pid]),
+	    lager:debug("~p not found.", [Pid]),
 	    ApplyList
     end.
 
 output(Result, OutPut) when is_list(OutPut) ->
-    ?dbg("output: search in ~p for result ~p",[OutPut, Result]),
+    lager:debug("search in ~p for result ~p",[OutPut, Result]),
     %% Use match spec to see if Result exists in Output list
     %%  [{MatchHead = {<received result>, <rest of output tuple>}, 
     %%    MatchCond = <no conditions>, 
@@ -1380,10 +1371,10 @@ output(Result, OutPut) when is_list(OutPut) ->
     output(ets:match_spec_run(OutPut, CompMatchSpec)).
 
 output([]) ->
-    ?dbg("output: no more output matching result",[]),
+    lager:debug("no more output matching result",[]),
     ok;
 output([{_Result, {Rid, RChannel, Type, Value} = _O} | Rest]) ->
-    ?dbg("output: ~p matched result ~p",[_O, _Result]),
+    lager:debug("~p matched result ~p",[_O, _Result]),
     Data = <<Value:32/little>>,
     co_api:notify(rid_translate(Rid), type2msg(Type), RChannel, Data),
     output(Rest).
@@ -1415,7 +1406,7 @@ init_if_gpio(?MSG_OUTPUT_ADD,
 	piface ->	    
 	    ok;
 	_Board ->
-	    ?dbg("init_gpio_port: not supported board ~p",[_Board])
+	    lager:debug("not supported board ~p",[_Board])
     end;
 init_if_gpio(_Cmd, _I) -> %% Release case ??
     ok.
@@ -1423,8 +1414,8 @@ init_if_gpio(_Cmd, _I) -> %% Release case ??
 reset_items(Items) ->
     lists:foreach(
       fun(I) ->
-	      ?dbg("reset_items: resetting ~p, ~p, ~p", 
-		   [I#item.type,I#item.unit,I#item.lchan]),
+	      lager:debug("resetting ~p, ~p, ~p", 
+			  [I#item.type,I#item.unit,I#item.lchan]),
 	      %% timer:sleep(1000), %% Otherwise rfzone chokes ..
 	      Fs = I#item.flags,
 	      Analog = proplists:get_bool(analog, Fs),
@@ -1470,14 +1461,14 @@ init_events([E=#event {pattern = Pattern} | Rest],Acc,Pi) ->
 	    Edge = proplists:get_value(interrupt, Pattern, none),
 	    case proplists:get_value(board, Pattern, cpu) of
 		cpu -> 
-		    ?dbg("cpu set interrupt ~p\n", [{PinReg, Pin, Edge}]),
+		    lager:debug("cpu set interrupt ~p\n", [{PinReg, Pin, Edge}]),
 		    call_gpio(set_interrupt, [PinReg, Pin, Edge]),
 		    init_events(Rest, [E|Acc], Pi);
 		piface ->
-		    ?dbg("piface set interrupt ~p\n", [{PinReg, Pin, Edge}]),
+		    lager:debug("piface set interrupt ~p\n", [{PinReg, Pin, Edge}]),
 		    if Edge =/= none, 
 		       Pi =:= false ->
-			    ?dbg("piface init_interrupt", []),
+			    lager:debug("piface init_interrupt", []),
 			    call_piface(init_interrupt, []),
 			    call_gpio(init, [?PIFACE_PIN]), 
 			    call_gpio(set_interrupt, [?PIFACE_PIN, falling]),
@@ -1490,12 +1481,12 @@ init_events([E=#event {pattern = Pattern} | Rest],Acc,Pi) ->
 	    end;
 	sms ->
 	    Filter = sms_filter(Pattern),
-	    ?dbg("sms filter = ~p\n", [Filter]),
+	    lager:debug("sms filter = ~p\n", [Filter]),
 	    case gsms:subscribe(Filter) of
 		{ok,Ref} ->
 		    init_events(Rest, [E#event{ref=Ref}|Acc], Pi);
 		_Error ->
-		    ?error("unable to subscribe to sms ~p", [_Error]),
+		    lager:error("unable to subscribe to sms ~p", [_Error]),
 		    init_events(Rest, [E|Acc], Pi)
 	    end;
 	_Other -> 
@@ -1572,10 +1563,10 @@ load_conf([C | Cs], Conf, Is, Ts) ->
 	    {error, {unknown_config, C}}
     end;
 load_conf([], Conf, Is, Ts) ->
-    ?dbg("Loaded items: \n ",[]),
-    lists:foreach(fun(I) -> ?dbg("~s", [fmt_item(I)]) end, Is),
-    ?dbg("Loaded events: \n ",[]),
-    lists:foreach(fun(E) -> ?dbg("~s", [fmt_event(E)]) end, Ts),
+    lager:debug("Loaded items: \n ",[]),
+    lists:foreach(fun(I) -> lager:debug("~s", [fmt_item(I)]) end, Is),
+    lager:debug("Loaded events: \n ",[]),
+    lists:foreach(fun(E) -> lager:debug("~s", [fmt_event(E)]) end, Ts),
     if Conf#conf.product =:= undefined ->
 	    {error, no_product};
        true ->
@@ -1682,7 +1673,7 @@ verify_item(_I=#item {type = exodm,
 		      unit = _Mod, 
 		      lchan = _Fun, 
 		      flags = _Args}) ->
-    ?dbg("verify_item: illegal exodm format, mod ~p, fun ~p, args ~p.",
+    lager:warning("illegal exodm format, mod ~p, fun ~p, args ~p.",
 	 [_Mod, _Fun, _Args]),
     {error, illegal_exodm_format};
 
@@ -1739,7 +1730,7 @@ verify_app_started(App) ->
 			       A =:= piface -> 
 		    true;
 		_Other -> 
-		    ?warning("application ~p not runnning", [App]),
+		    lager:warning("application ~p not runnning", [App]),
 		    false
 	    end
     end.
@@ -1758,7 +1749,7 @@ verify_event(_I=#event {pattern = Pattern,
 		    digital -> true;
 		    encoder -> true;
 		    _ -> 
-			?dbg("verify_event: illegal type ~p.", [Type]),
+			lager:warning("illegal type ~p.", [Type]),
 			false
 		end
        end, {error, bad_channel_type},
@@ -1773,7 +1764,7 @@ verify_event(_I=#event {pattern = Pattern,
 			true;
 		    encoder -> is_integer(Value);
 		    _ -> 
-			?dbg("verify_event: illegal type/value ~p/~p.", 
+			lager:warning("illegal type/value ~p/~p.", 
 			     [Type, Value]),
 			false
 		end
@@ -2017,7 +2008,7 @@ verify_event(Event, [K|Ks]) ->
 verify_event([], _) ->
     true;
 verify_event(_E, []) ->
-    ?dbg("verify_event: unexpected key(s) ~p.", [_E]),
+    lager:debug("unexpected key(s) ~p.", [_E]),
     false.
 
 %% take subset of proplist
@@ -2044,7 +2035,7 @@ verify_gpio_event(Event) ->
 			  interrupt,polarity,
 			  apps]);
 	false ->
-	    ?dbg("verify_gpio_event: missing pin",[])
+	    lager:warning("missing pin",[])
     end.
 		    
 
@@ -2075,8 +2066,7 @@ verify_unit_range(gpio, PinReg)
        PinReg =< 1 ->
     ok;
 verify_unit_range(_Type, _Unit) ->
-    ?dbg("verify_unit_range: invalid type/unit combination ~p,~p", 
-		   [_Type, _Unit]),
+    lager:warning("invalid type/unit combination ~p,~p", [_Type, _Unit]),
     {error, invalid_type_unit_combination}.
 
 verify_channel_range(nexa, Channel) 
@@ -2108,8 +2098,7 @@ verify_channel_range(gpio, Pin)
        Pin =< 255 -> 
     ok;
 verify_channel_range(_Type, _Channel) ->
-    ?dbg("verify_channel_range: invalid type/channel combination ~p,~p", 
-		   [_Type, _Channel]),
+    lager:warning("invalid type/channel combination ~p,~p", [_Type, _Channel]),
     {error, invalid_type_channel_combination}.
 
 
@@ -2182,8 +2171,7 @@ verify_flags(Type, [{timeout,Time} | Flags], I)
        is_integer(Time), Time >= 0 ->
     verify_flags(Type, Flags, I);
 verify_flags(_Type, [_Flag | _Flags], _I) ->
-    ?dbg("verify_flags: invalid type/flag combination ~p,~p", 
-		   [_Type, _Flag]),
+    lager:warning("invalid type/flag combination ~p,~p", [_Type, _Flag]),
     {error, invalid_type_flag_combination}.
 
 %%--------------------------------------------------------------------
@@ -2277,12 +2265,12 @@ full_filename(FileName) ->
     end.
 
 subscribe(CoNode) ->
-    ?dbg("subscribe: IndexList = ~w",[?COMMANDS]),
+    lager:debug("IndexList = ~w",[?COMMANDS]),
     lists:foreach(fun({{Index, _SubInd}, _Type, _Value}) ->
 			  co_api:extended_notify_subscribe(CoNode, Index)
 		  end, ?COMMANDS).
 unsubscribe(CoNode) ->
-    ?dbg("unsubscribe: IndexList = ~w",[?COMMANDS]),
+    lager:debug("IndexList = ~w",[?COMMANDS]),
     lists:foreach(fun({{Index, _SubInd}, _Type, _Value}) ->
 			  co_api:extended_notify_unsubscribe(CoNode, Index)
 		  end, ?COMMANDS).
